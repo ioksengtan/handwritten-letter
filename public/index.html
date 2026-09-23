@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f7f8" />
+    <title>手寫信</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 7.5 L14 2.5 L9 14 L7.5 8.5 Z' fill='%23243e68'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <p id="toast" class="toast" role="status" hidden></p>
+
+      <section id="view-home" class="view has-dock">
+        <div class="scroll">
+          <header class="topbar">
+            <h1>手寫信</h1>
+          </header>
+          <div id="home-letters"></div>
+          <section class="block">
+            <h2>示範路線</h2>
+            <div id="preset-list"></div>
+          </section>
+        </div>
+        <div class="dock">
+          <button type="button" class="btn primary" id="btn-new">寫一封信</button>
+        </div>
+      </section>
+
+      <section id="view-compose" class="view has-dock" hidden>
+        <div class="scroll">
+        <header class="topbar">
+          <button type="button" class="icon-btn" id="compose-back" aria-label="返回">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <h1>寫信</h1>
+        </header>
+        <div class="compose-body">
+          <div class="paper-frame">
+            <canvas id="letter-canvas" width="600" height="760"></canvas>
+          </div>
+          <div class="tool-row">
+            <button type="button" id="btn-upload">上傳照片</button>
+            <button type="button" id="btn-undo">復原</button>
+            <button type="button" id="btn-clear">清除</button>
+            <input id="file-input" type="file" accept="image/*" hidden />
+          </div>
+          <fieldset class="panel">
+            <legend>寄出地</legend>
+            <div id="from-chips" class="chips"></div>
+          </fieldset>
+          <fieldset class="panel">
+            <legend>收件地</legend>
+            <div id="to-chips" class="chips"></div>
+          </fieldset>
+          <div class="estimate" id="estimate"></div>
+          <div class="pace-row">
+            <span>節奏</span>
+            <div class="segment" role="group" aria-label="飛行節奏">
+              <button type="button" id="pace-fast" data-pace="playable-fast" aria-pressed="true">可玩快</button>
+              <button type="button" id="pace-slow" data-pace="romantic-slow" aria-pressed="false">浪漫慢</button>
+            </div>
+          </div>
+          <p class="hint" id="pace-hint" hidden>預留節奏。同樣的距離會飛得慢很多。</p>
+        </div>
+        </div>
+        <div class="dock dock-split">
+          <button type="button" class="btn" id="btn-save">儲存草稿</button>
+          <button type="button" class="btn primary" id="btn-throw">扔出</button>
+        </div>
+      </section>
+
+      <section id="view-flight" class="view view-flight" hidden>
+        <div id="map"></div>
+        <button type="button" class="icon-btn float-back" id="flight-back" aria-label="返回">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="sheet" id="flight-sheet">
+          <p class="route" id="flight-route"></p>
+          <p class="eta" id="flight-eta"></p>
+          <p class="remain" id="flight-remain"></p>
+          <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
+          <button type="button" class="btn primary" id="btn-open" hidden>打開信</button>
+        </div>
+      </section>
+
+      <section id="view-read" class="view view-read" hidden>
+        <header class="topbar topbar-plain">
+          <button type="button" class="icon-btn" id="read-back" aria-label="返回">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <h1>來信</h1>
+        </header>
+        <div class="read-body">
+          <figure class="letter-card">
+            <img id="read-image" alt="" />
+          </figure>
+          <p class="caption" id="read-caption"></p>
+        </div>
+      </section>
+    </div>
+    <script src="/vendor/leaflet/leaflet.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

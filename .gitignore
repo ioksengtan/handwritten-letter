@@ -1,0 +1,5 @@
+node_modules/
+data/letters.json
+data/letters.json.tmp
+data/images/
+.DS_Store
