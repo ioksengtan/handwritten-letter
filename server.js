@@ -4,9 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "./lib/store.js";
-import { describeFlight, flightDurationSeconds, haversineKm } from "./shared/flight.js";
+import { describeFlight, haversineKm } from "./shared/flight.js";
 import { PLACES, PRESETS, findPlace } from "./shared/places.js";
 import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
+import { backgroundSnapshots, planCourier } from "./shared/route.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const MIN_DISTANCE_KM = 0.05;
@@ -32,10 +33,12 @@ function parseDataUrl(dataUrl) {
 
 function senderFromId(id) {
   const city = findCity(id);
-  if (city) return { id: city.id, name: city.name, lat: city.lat, lng: city.lng };
+  if (city) {
+    return { id: city.id, name: city.name, country: city.country, lat: city.lat, lng: city.lng };
+  }
   const place = findPlace(id);
   if (!place) return null;
-  return { id: place.id, name: place.name, lat: place.lat, lng: place.lng };
+  return { id: place.id, name: place.name, country: place.country, lat: place.lat, lng: place.lng };
 }
 
 function destinationFromId(id) {
@@ -61,18 +64,19 @@ function buildGeometry(fromId, toId, pace) {
   if (from.id === to.id) return { error: "請選擇不同的寄出地與收件地" };
   const distanceKm = round(haversineKm(from.lat, from.lng, to.lat, to.lng), 3);
   if (distanceKm < MIN_DISTANCE_KM) return { error: "請選擇不同的寄出地與收件地" };
-  let durationSeconds;
+  let plan;
   try {
-    durationSeconds = flightDurationSeconds(distanceKm, pace || "playable-fast");
+    plan = planCourier({ from, to, pace: pace || "playable-fast" });
   } catch {
     return { error: "不認識的飛行節奏" };
   }
   return {
     from,
     to,
-    distanceKm,
-    durationSeconds,
-    pace: pace || "playable-fast",
+    distanceKm: plan.distanceKm,
+    durationSeconds: plan.durationSeconds,
+    legs: plan.legs,
+    pace: plan.pace,
   };
 }
 
@@ -99,9 +103,23 @@ function toPublic(letter, nowMs) {
     },
     remainingKm: round(flight.remainingKm, 3),
     etaSeconds: flight.etaSeconds == null ? null : Math.max(0, Math.round(flight.etaSeconds)),
+    legs: letter.legs || null,
+    mode: flight.mode,
+    legIndex: flight.legIndex,
     serverNow: new Date(nowMs).toISOString(),
     imageUrl: imageVisible ? `/api/letters/${letter.id}/image` : null,
   };
+}
+
+function legsOf(letter) {
+  if (Array.isArray(letter.legs) && letter.legs.length) return letter.legs;
+  return [{
+    mode: "plane",
+    from: { name: letter.from.name, lat: letter.from.lat, lng: letter.from.lng },
+    to: { name: letter.to.name, lat: letter.to.lat, lng: letter.to.lng },
+    distanceKm: letter.distanceKm,
+    durationSeconds: letter.durationSeconds || 1,
+  }];
 }
 
 export function createApp({
@@ -160,6 +178,7 @@ export function createApp({
       distanceKm: geo.distanceKm,
       durationSeconds: geo.durationSeconds,
       pace: geo.pace,
+      legs: geo.legs,
     };
   }
 
@@ -193,6 +212,22 @@ export function createApp({
     const geo = buildGeometry(from.id, recipient.id, body.pace || "playable-fast");
     if (geo.error) return res.status(400).json({ error: geo.error });
     res.json(toRoute(geo));
+  });
+
+  app.get("/api/activity", (req, res) => {
+    const nowMs = now();
+    const letters = persistArrivals(nowMs);
+    const trips = [
+      ...backgroundSnapshots(nowMs),
+      ...letters.filter((letter) => letter.status === "in_flight").map((letter) => ({
+        id: letter.id,
+        kind: "yours",
+        legs: legsOf(letter),
+        departedAt: letter.departedAt,
+        arrivesAt: letter.arrivesAt,
+      })),
+    ];
+    res.json({ traveling: trips.length, trips });
   });
 
   app.get("/api/letters", (req, res) => {
@@ -249,6 +284,7 @@ export function createApp({
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
+      legs: geo.legs,
       imageFile: image.imageFile,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -295,6 +331,7 @@ export function createApp({
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
+      legs: geo.legs,
       imageFile,
       updatedAt: new Date(nowMs).toISOString(),
     });
@@ -330,6 +367,7 @@ export function createApp({
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
+      legs: geo.legs,
       imageFile,
       departedAt: departed.toISOString(),
       arrivesAt: new Date(departed.getTime() + geo.durationSeconds * 1000).toISOString(),

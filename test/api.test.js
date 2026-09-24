@@ -235,5 +235,47 @@ test("random draw avoids the sender city and the last recipient", async () => {
   assert.equal(nyc.body.to.city, "紐約");
   assert.ok(nyc.body.distanceKm > 10000);
   assert.equal(nyc.body.durationSeconds, 18 * 60);
+  assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
+  assert.equal(
+    nyc.body.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
+    nyc.body.durationSeconds,
+  );
+});
+
+test("activity counts real flights plus background trips", async () => {
+  const before = await send(`${base}/api/activity`);
+  assert.equal(before.status, 200);
+  const letters = await send(`${base}/api/letters`);
+  const real = letters.body.filter((letter) => letter.status === "in_flight").length;
+  assert.ok(before.body.traveling >= real + 6);
+  assert.equal(
+    before.body.trips.filter((trip) => trip.kind === "background").length >= 6,
+    true,
+  );
+  assert.equal(before.body.trips.some((trip) => trip.imageUrl), false);
+
+  const created = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "jiahui",
+      launch: true,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
+  assert.equal(created.body.mode, "road");
+
+  const after = await send(`${base}/api/activity`);
+  assert.equal(after.body.traveling, before.body.traveling + 1);
+  assert.ok(after.body.trips.some((trip) => trip.id === created.body.id && trip.kind === "yours"));
+
+  const roadSeconds = created.body.legs[0].durationSeconds;
+  nowMs += (roadSeconds + 2) * 1000;
+  const flying = await send(`${base}/api/letters/${created.body.id}`);
+  assert.equal(flying.body.mode, "plane");
+  assert.equal(flying.body.legIndex, 1);
+  assert.ok(haversineKm(flying.body.position.lat, flying.body.position.lng, 25.047924, 121.517081) > 30);
 });
 });

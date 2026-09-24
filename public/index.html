@@ -21,6 +21,10 @@
           <header class="topbar">
             <h1>手寫信</h1>
           </header>
+          <div class="activity">
+            <p id="travel-count"></p>
+            <div id="home-map"></div>
+          </div>
           <div id="home-letters"></div>
           <section class="block">
             <h2>固定路線</h2>
@@ -98,6 +102,8 @@
           <p class="eta" id="draw-name"></p>
           <p class="remain" id="draw-where"></p>
           <p class="draw-meta" id="draw-meta"></p>
+          <p class="via" id="draw-via"></p>
+          <div class="leg-legend" id="draw-legend"></div>
           <div class="sender-line">
             <span>寄出地</span>
             <div id="draw-senders" class="chip-scroller"></div>
@@ -117,9 +123,12 @@
           </svg>
         </button>
         <div class="sheet" id="flight-sheet">
+          <p class="travel-count" id="flight-travel"></p>
           <p class="route" id="flight-route"></p>
+          <p class="mode-now" id="flight-mode"></p>
           <p class="eta" id="flight-eta"></p>
           <p class="remain" id="flight-remain"></p>
+          <div class="leg-legend" id="flight-legend"></div>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
           <button type="button" class="btn primary" id="btn-open" hidden>打開信</button>
         </div>

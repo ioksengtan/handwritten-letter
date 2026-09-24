@@ -2,8 +2,9 @@
  * Flight duration and position.
  *
  * The server stores departedAt and arrivesAt. Progress is the fraction of
- * that window that has elapsed. The client only draws the great-circle
- * position for that fraction — it never decides when a letter lands.
+ * that window that has elapsed. When the letter has courier legs, the
+ * position walks those legs in order. Otherwise it follows one great circle.
+ * The client only draws that position — it never decides when a letter lands.
  *
  * playable-fast (default):
  *   seconds = clamp(12 * sqrt(distanceKm), 25, 18 * 60)
@@ -144,6 +145,36 @@ export function unwrapLongitudes(points) {
   return out;
 }
 
+/** Where the courier is after `elapsedSeconds` along sequential legs. */
+export function locateOnLegs(legs, elapsedSeconds) {
+  const total = legs.reduce((sum, leg) => sum + leg.durationSeconds, 0) || 1;
+  let left = Math.min(Math.max(0, elapsedSeconds), total);
+  for (let i = 0; i < legs.length; i += 1) {
+    const leg = legs[i];
+    const last = i === legs.length - 1;
+    if (left < leg.durationSeconds || last) {
+      const frac = leg.durationSeconds <= 0 ? 1 : Math.min(1, left / leg.durationSeconds);
+      const later = legs.slice(i + 1).reduce((sum, item) => sum + item.distanceKm, 0);
+      return {
+        legIndex: i,
+        mode: leg.mode,
+        legFraction: frac,
+        position: interpolate(leg.from.lat, leg.from.lng, leg.to.lat, leg.to.lng, frac),
+        remainingKm: leg.distanceKm * (1 - frac) + later,
+      };
+    }
+    left -= leg.durationSeconds;
+  }
+  const last = legs[legs.length - 1];
+  return {
+    legIndex: legs.length - 1,
+    mode: last.mode,
+    legFraction: 1,
+    position: { lat: last.to.lat, lng: last.to.lng },
+    remainingKm: 0,
+  };
+}
+
 /**
  * Derive live flight fields from stored timestamps.
  * `nowMs` is injectable so tests can move the clock without sleeping.
@@ -152,6 +183,8 @@ export function describeFlight(letter, nowMs) {
   const origin = { lat: letter.from.lat, lng: letter.from.lng };
   const dest = { lat: letter.to.lat, lng: letter.to.lng };
 
+  const legs = Array.isArray(letter.legs) ? letter.legs : [];
+
   if (letter.status === "draft" || !letter.departedAt || !letter.arrivesAt) {
     return {
       status: "draft",
@@ -159,6 +192,8 @@ export function describeFlight(letter, nowMs) {
       position: origin,
       remainingKm: letter.distanceKm,
       etaSeconds: null,
+      mode: legs[0]?.mode || null,
+      legIndex: legs.length ? 0 : null,
     };
   }
 
@@ -169,11 +204,37 @@ export function describeFlight(letter, nowMs) {
   if (letter.status === "delivered") progress = 1;
   progress = clamp(progress, 0, 1);
   const arrived = letter.status === "delivered" || progress >= 1;
+
+  let position;
+  let remainingKm;
+  let mode = null;
+  let legIndex = null;
+  if (legs.length) {
+    const total = legs.reduce((sum, leg) => sum + leg.durationSeconds, 0) || 1;
+    const elapsed = arrived ? total : clamp((nowMs - start) / 1000, 0, total);
+    const loc = locateOnLegs(legs, elapsed);
+    position = loc.position;
+    remainingKm = arrived ? 0 : loc.remainingKm;
+    mode = loc.mode;
+    legIndex = loc.legIndex;
+    if (arrived) {
+      const last = legs[legs.length - 1];
+      position = { lat: last.to.lat, lng: last.to.lng };
+      mode = last.mode;
+      legIndex = legs.length - 1;
+    }
+  } else {
+    position = interpolate(origin.lat, origin.lng, dest.lat, dest.lng, progress);
+    remainingKm = letter.distanceKm * (1 - progress);
+  }
+
   return {
     status: arrived ? "delivered" : "in_flight",
     progress,
-    position: interpolate(origin.lat, origin.lng, dest.lat, dest.lng, progress),
-    remainingKm: letter.distanceKm * (1 - progress),
+    position,
+    remainingKm,
     etaSeconds: arrived ? 0 : Math.max(0, (end - nowMs) / 1000),
+    mode,
+    legIndex,
   };
 }

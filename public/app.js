@@ -1,14 +1,14 @@
 import {
   alignLongitude,
   bearingDegrees,
-  flightDurationSeconds,
   haversineKm,
-  interpolate,
+  locateOnLegs,
   samplePath,
   unwrapLongitudes,
 } from "/shared/flight.js";
 import { PLACES, findPlace, findPreset } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
+import { MODE_COLOR, MODE_LABEL, legVia, planCourier } from "/shared/route.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
@@ -17,6 +17,22 @@ const PLANE_SVG = `
   <path d="M32 6 L56 52 L32 42 L8 52 Z" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7" stroke-linejoin="round"/>
   <path d="M32 16 L32 42" stroke="#1d2a3a" stroke-width="1.1" opacity="0.35"/>
 </svg>`;
+const TRUCK_SVG = `
+<svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
+  <rect x="22" y="8" width="20" height="16" rx="3" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
+  <rect x="16" y="24" width="32" height="22" rx="3" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
+  <circle cx="24" cy="50" r="4" fill="#1d2a3a"/>
+  <circle cx="40" cy="50" r="4" fill="#1d2a3a"/>
+</svg>`;
+const TRAIN_SVG = `
+<svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
+  <rect x="18" y="8" width="28" height="40" rx="8" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
+  <rect x="24" y="16" width="16" height="10" rx="2" fill="#d5e4f2"/>
+  <circle cx="24" cy="52" r="3.4" fill="#1d2a3a"/>
+  <circle cx="40" cy="52" r="3.4" fill="#1d2a3a"/>
+</svg>`;
+const MODE_SVG = { road: TRUCK_SVG, train: TRAIN_SVG, plane: PLANE_SVG };
+const MODE_NOW = { road: "現在走公路", train: "現在搭火車", plane: "現在搭飛機" };
 
 const state = {
   view: "home",
@@ -32,6 +48,10 @@ const state = {
   dpr: 1,
   undo: [],
   map: null,
+  mapUnwrap: false,
+  originLng: 0,
+  dots: new Map(),
+  trips: [],
   raf: 0,
   poll: 0,
   flight: null,
@@ -163,6 +183,8 @@ function stopLoops() {
     state.map.remove();
     state.map = null;
   }
+  state.dots = new Map();
+  state.mapUnwrap = false;
   state.flight = null;
 }
 
@@ -190,7 +212,8 @@ function renderHomeList(letters) {
       let detail = "草稿";
       let extra = "";
       if (letter.status === "in_flight") {
-        detail = `剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatDuration(letter.etaSeconds))}後抵達`;
+        const mode = letter.mode ? `${esc(MODE_LABEL[letter.mode] || "")} · ` : "";
+        detail = `${mode}剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatDuration(letter.etaSeconds))}後抵達`;
         extra = `<span class="mini-track"><span style="width:${Math.round(letter.progress * 100)}%"></span></span>`;
       } else if (letter.status === "delivered") {
         detail = "已抵達 · 打開";
@@ -213,10 +236,20 @@ function renderHomeList(letters) {
   });
 }
 
+async function loadActivity() {
+  const activity = await api("/api/activity");
+  state.trips = activity.trips;
+  const text = `${activity.traveling} 封信正在路上`;
+  setText("travel-count", text);
+  setText("flight-travel", text);
+  return activity;
+}
+
 async function refreshHome() {
-  const letters = await api("/api/letters");
+  const [letters] = await Promise.all([api("/api/letters"), loadActivity()]);
   if (state.view !== "home") return;
   renderHomeList(letters);
+  ensureHomeMap();
 }
 
 function buildPresets() {
@@ -224,12 +257,12 @@ function buildPresets() {
   for (const preset of ["tpe-khh", "tpe-tyo", "tpe-101"].map(findPreset)) {
     const from = findPlace(preset.from);
     const to = findPlace(preset.to);
-    const km = haversineKm(from.lat, from.lng, to.lat, to.lng);
-    const seconds = flightDurationSeconds(km, "playable-fast");
+    const plan = planCourier({ from, to, pace: "playable-fast" });
+    const modes = plan.legs.map((leg) => MODE_LABEL[leg.mode]).join(" → ");
     const button = document.createElement("button");
     button.type = "button";
     button.className = "preset";
-    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(formatDistance(km))}</small></span><span class="preset-time">約 ${esc(formatDuration(seconds))}</span>`;
+    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(modes)} · ${esc(formatDistance(plan.distanceKm))}</small></span><span class="preset-time">約 ${esc(formatDuration(plan.durationSeconds))}</span>`;
     button.addEventListener("click", () => navigate(`#/compose?preset=${preset.id}`));
     root.append(button);
   }
@@ -323,10 +356,9 @@ function updateEstimate() {
     box.textContent = "請選擇不同的寄出地與收件地";
     return;
   }
-  const km = haversineKm(from.lat, from.lng, to.lat, to.lng);
-  const seconds = flightDurationSeconds(km, state.pace);
+  const plan = planCourier({ from, to, pace: state.pace });
   box.className = "estimate";
-  box.innerHTML = `<strong>${esc(formatDistance(km))}</strong><span>約 ${esc(formatDuration(seconds))}</span>`;
+  box.innerHTML = `<strong>${esc(formatDistance(plan.distanceKm))}</strong><span>約 ${esc(formatDuration(plan.durationSeconds))}</span><span class="via">${esc(legVia(plan.legs))}</span>`;
 }
 
 function applyComposeMode() {
@@ -601,47 +633,108 @@ function setText(id, value) {
   if (el.textContent !== value) el.textContent = value;
 }
 
-function mountRouteMap(container, from, to, { showPlane = false, padBottom = 196 } = {}) {
-  const path = unwrapLongitudes(samplePath(from, to, 80));
-  const map = L.map(container, {
-    zoomControl: true,
-    attributionControl: true,
-    worldCopyJump: true,
-  });
+function letterLegs(record) {
+  if (record.legs?.length) return record.legs;
+  const from = record.from;
+  const to = record.to;
+  return [{
+    mode: "plane",
+    from: { name: from.name, lat: from.lat, lng: from.lng },
+    to: { name: to.city || to.name, lat: to.lat, lng: to.lng },
+    distanceKm: record.distanceKm || haversineKm(from.lat, from.lng, to.lat, to.lng),
+    durationSeconds: record.durationSeconds || 1,
+  }];
+}
+
+function sampleLegs(legs) {
+  const flat = [];
+  const ranges = [];
+  for (const leg of legs) {
+    const chunk = samplePath(leg.from, leg.to, leg.mode === "plane" ? 64 : 12);
+    const start = flat.length;
+    flat.push(...(start === 0 ? chunk : chunk.slice(1)));
+    ranges.push([start, flat.length]);
+  }
+  const unwrapped = unwrapLongitudes(flat);
+  return ranges.map(([start, end]) => unwrapped.slice(start, end));
+}
+
+function addTiles(map) {
   map.createPane("plane");
   map.getPane("plane").style.zIndex = 640;
+  map.createPane("traffic");
+  map.getPane("traffic").style.zIndex = 450;
   L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     subdomains: "abcd",
     maxZoom: 19,
     attribution: "&copy; OpenStreetMap &copy; CARTO",
   }).addTo(map);
+}
 
-  const latLngs = path.map((point) => [point.lat, point.lng]);
-  L.polyline(latLngs, {
-    color: "#8aa0b8",
-    weight: 2,
-    opacity: 0.9,
-    dashArray: "1 9",
-    lineCap: "round",
-  }).addTo(map);
-  const flown = L.polyline([], {
-    color: "#243e68",
-    weight: 2.5,
-    opacity: 0.9,
-  }).addTo(map);
+function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom = 196, badges = false } = {}) {
+  const routeLegs = legs?.length ? legs : letterLegs({ from, to });
+  const legPaths = sampleLegs(routeLegs);
+  const map = L.map(container, {
+    zoomControl: true,
+    attributionControl: true,
+    worldCopyJump: true,
+  });
+  addTiles(map);
 
-  const dot = (kind) => L.divIcon({
+  const legFlown = [];
+  routeLegs.forEach((leg, index) => {
+    const path = legPaths[index];
+    const latLngs = path.map((point) => [point.lat, point.lng]);
+    L.polyline(latLngs, {
+      color: MODE_COLOR[leg.mode],
+      weight: 3,
+      opacity: 0.4,
+      dashArray: "1 8",
+      lineCap: "round",
+    }).addTo(map);
+    legFlown.push(L.polyline([], {
+      color: MODE_COLOR[leg.mode],
+      weight: 3.5,
+      opacity: 0.95,
+    }).addTo(map));
+    if (badges) {
+      const mid = path[Math.floor(path.length / 2)];
+      L.marker([mid.lat, mid.lng], {
+        icon: L.divIcon({
+          className: "mode-badge",
+          html: `<span class="mode-badge-icon" style="background:${MODE_COLOR[leg.mode]}">${MODE_SVG[leg.mode]}</span>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+        interactive: false,
+        zIndexOffset: 500,
+      }).addTo(map);
+    }
+    if (index > 0) {
+      L.marker([path[0].lat, path[0].lng], {
+        icon: L.divIcon({
+          className: "dot-icon",
+          html: `<span class="dot dot-hub"></span>`,
+          iconSize: [8, 8],
+          iconAnchor: [4, 4],
+        }),
+        interactive: false,
+      }).addTo(map);
+    }
+  });
+
+  const dot = (color) => L.divIcon({
     className: "dot-icon",
-    html: `<span class="dot dot-${kind}"></span>`,
+    html: `<span class="dot dot-origin" style="background:${color}"></span>`,
     iconSize: [12, 12],
     iconAnchor: [6, 6],
   });
-  const origin = path[0];
-  const dest = path[path.length - 1];
-  L.marker([origin.lat, origin.lng], { icon: dot("origin"), interactive: false })
+  const origin = legPaths[0][0];
+  const dest = legPaths[legPaths.length - 1][legPaths[legPaths.length - 1].length - 1];
+  L.marker([origin.lat, origin.lng], { icon: dot(MODE_COLOR[routeLegs[0].mode]), interactive: false })
     .bindTooltip(pinLabel(from), { permanent: true, direction: "left", className: "city-label", offset: [-8, 0] })
     .addTo(map);
-  L.marker([dest.lat, dest.lng], { icon: dot("dest"), interactive: false })
+  L.marker([dest.lat, dest.lng], { icon: dot(MODE_COLOR[routeLegs[routeLegs.length - 1].mode]), interactive: false })
     .bindTooltip(pinLabel(to), { permanent: true, direction: "right", className: "city-label", offset: [8, 0] })
     .addTo(map);
 
@@ -650,7 +743,7 @@ function mountRouteMap(container, from, to, { showPlane = false, padBottom = 196
     plane = L.marker([origin.lat, origin.lng], {
       icon: L.divIcon({
         className: "plane-wrap",
-        html: `<div class="plane-rot">${PLANE_SVG}</div>`,
+        html: `<div class="plane-rot"><div class="courier-glyph">${MODE_SVG[routeLegs[0].mode]}</div></div>`,
         iconSize: [42, 42],
         iconAnchor: [21, 21],
       }),
@@ -660,9 +753,10 @@ function mountRouteMap(container, from, to, { showPlane = false, padBottom = 196
     }).addTo(map);
   }
 
+  const all = legPaths.flat().map((point) => [point.lat, point.lng]);
   const fit = () => {
     map.invalidateSize();
-    map.fitBounds(latLngs, {
+    map.fitBounds(all, {
       paddingTopLeft: [36, 72],
       paddingBottomRight: [36, padBottom],
       animate: false,
@@ -670,72 +764,202 @@ function mountRouteMap(container, from, to, { showPlane = false, padBottom = 196
   };
   fit();
   requestAnimationFrame(fit);
-  return { map, path, flown, plane };
+  state.mapUnwrap = true;
+  state.originLng = origin.lng;
+  state.dots = new Map();
+  container.__map = map;
+  return { map, legPaths, legFlown, plane, legs: routeLegs, originLng: origin.lng };
+}
+
+function renderLegend(id, legs, activeIndex) {
+  const root = $(id);
+  const key = `${legs.map((leg) => leg.mode).join("-")}:${activeIndex}`;
+  if (root.dataset.key === key) return;
+  root.dataset.key = key;
+  root.innerHTML = legs.map((leg, index) => {
+    const active = index === activeIndex ? " is-active" : "";
+    return `<span class="leg${active}"><i style="background:${MODE_COLOR[leg.mode]}"></i>${esc(MODE_LABEL[leg.mode])}</span>`;
+  }).join(`<span class="leg-arrow">→</span>`);
+}
+
+function paintFlown(legPaths, legFlown, legs, elapsed) {
+  const loc = locateOnLegs(legs, elapsed);
+  legPaths.forEach((path, index) => {
+    let slice = [];
+    if (index < loc.legIndex) slice = path;
+    else if (index === loc.legIndex) {
+      const n = Math.round(loc.legFraction * (path.length - 1));
+      slice = path.slice(0, n + 1);
+    }
+    legFlown[index].setLatLngs(slice.map((point) => [point.lat, point.lng]));
+  });
+  return loc;
 }
 
 function mountFlight(letter) {
-  const view = mountRouteMap($("map"), letter.from, letter.to, { showPlane: true, padBottom: 196 });
+  const legs = letterLegs(letter);
+  const view = mountRouteMap($("map"), letter.from, letter.to, { legs, showPlane: true, padBottom: 250 });
   state.map = view.map;
   state.flight = {
     letter,
-    path: view.path,
-    flown: view.flown,
+    legs,
+    legPaths: view.legPaths,
+    legFlown: view.legFlown,
     plane: view.plane,
-    originLng: view.path[0].lng,
-    lastBearing: bearingDegrees(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng),
+    originLng: view.originLng,
+    shownMode: legs[0].mode,
+    lastBearing: bearingDegrees(legs[0].from.lat, legs[0].from.lng, legs[0].to.lat, legs[0].to.lng),
     arrived: false,
-    lastTrail: 0,
   };
 }
 
-function updatePlane(position, bearing) {
+function setCourier(mode, position, bearing) {
   const { plane, originLng } = state.flight;
   plane.setLatLng([position.lat, alignLongitude(position.lng, originLng)]);
-  const el = plane.getElement()?.querySelector(".plane-rot");
-  if (el) el.style.transform = `rotate(${bearing}deg)`;
+  const root = plane.getElement();
+  if (!root) return;
+  const rot = root.querySelector(".plane-rot");
+  if (rot) rot.style.transform = `rotate(${bearing}deg)`;
+  if (state.flight.shownMode !== mode) {
+    state.flight.shownMode = mode;
+    const glyph = root.querySelector(".courier-glyph");
+    if (glyph) glyph.innerHTML = MODE_SVG[mode] || PLANE_SVG;
+  }
 }
 
-function renderFlightHud(letter, progress, etaSeconds) {
+function renderFlightHud(letter, progress, etaSeconds, loc) {
   setText("flight-route", routeLine(letter.from, letter.to));
+  const legs = state.flight?.legs || letterLegs(letter);
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
   if (progress >= 1) {
+    setText("flight-mode", "已送到");
+    $("flight-mode").style.color = "";
+    renderLegend("flight-legend", legs, legs.length - 1);
     setText("flight-eta", "已抵達");
     setText("flight-remain", pinLabel(letter.to));
     $("btn-open").hidden = false;
     $("flight-track").hidden = true;
   } else {
+    const mode = loc?.mode || letter.mode;
+    setText("flight-mode", MODE_NOW[mode] || "");
+    $("flight-mode").style.color = MODE_COLOR[mode] || "";
+    renderLegend("flight-legend", legs, loc ? loc.legIndex : letter.legIndex ?? 0);
     const secs = Math.ceil(etaSeconds);
     setText("flight-eta", secs <= 1 ? "即將抵達" : `${formatDuration(secs)}後抵達`);
-    setText("flight-remain", `剩餘 ${formatDistance(letter.distanceKm * (1 - progress))}`);
+    const remain = loc ? loc.remainingKm : letter.remainingKm;
+    setText("flight-remain", `剩餘 ${formatDistance(remain)}`);
     $("btn-open").hidden = true;
     $("flight-track").hidden = false;
   }
 }
 
+function tripPosition(trip) {
+  const start = Date.parse(trip.departedAt);
+  const end = Date.parse(trip.arrivesAt);
+  const span = Math.max(1, end - start) / 1000;
+  let elapsed = (nowMs() - start) / 1000;
+  if (trip.kind === "background") elapsed = ((elapsed % span) + span) % span;
+  else elapsed = clamp(elapsed, 0, span);
+  return locateOnLegs(trip.legs, elapsed);
+}
+
+function markerLatLng(position) {
+  if (!state.mapUnwrap) return [position.lat, position.lng];
+  return [position.lat, alignLongitude(position.lng, state.originLng)];
+}
+
+function paintTraffic() {
+  if (!state.map || !state.dots) return;
+  const seen = new Set();
+  for (const trip of state.trips || []) {
+    if (state.flight?.letter?.id === trip.id) continue;
+    if (!trip.legs?.length) continue;
+    seen.add(trip.id);
+    const loc = tripPosition(trip);
+    const latlng = markerLatLng(loc.position);
+    let marker = state.dots.get(trip.id);
+    if (!marker) {
+      marker = L.marker(latlng, {
+        icon: L.divIcon({
+          className: "traffic-icon",
+          html: `<span class="traffic-dot"></span>`,
+          iconSize: [9, 9],
+          iconAnchor: [4, 4],
+        }),
+        pane: "traffic",
+        interactive: false,
+      }).addTo(state.map);
+      state.dots.set(trip.id, marker);
+    } else {
+      marker.setLatLng(latlng);
+    }
+  }
+  for (const [id, marker] of state.dots) {
+    if (!seen.has(id)) {
+      marker.remove();
+      state.dots.delete(id);
+    }
+  }
+}
+
+function ensureHomeMap() {
+  if (state.map || state.view !== "home") return;
+  const map = L.map($("home-map"), {
+    zoomControl: false,
+    attributionControl: true,
+    worldCopyJump: true,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    touchZoom: false,
+  });
+  addTiles(map);
+  const fit = () => {
+    map.invalidateSize();
+    map.fitWorld({ animate: false });
+  };
+  fit();
+  requestAnimationFrame(fit);
+  state.map = map;
+  state.mapUnwrap = false;
+  state.dots = new Map();
+}
+
+function startAmbient(token) {
+  const step = () => {
+    if (token !== renderToken) return;
+    if (state.view !== "home" && state.view !== "draw") return;
+    paintTraffic();
+    state.raf = requestAnimationFrame(step);
+  };
+  state.raf = requestAnimationFrame(step);
+}
+
 function flightFrame(token) {
   const flight = state.flight;
   if (!flight || token !== renderToken) return;
-  const { letter } = flight;
+  const { letter, legs } = flight;
   const start = Date.parse(letter.departedAt);
   const end = Date.parse(letter.arrivesAt);
-  const t = clamp((nowMs() - start) / Math.max(1, end - start), 0, 1);
-  const pos = interpolate(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng, t);
-  const look = Math.min(1, t + 0.012);
-  if (look - t > 1e-4) {
-    const ahead = interpolate(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng, look);
-    if (haversineKm(pos.lat, pos.lng, ahead.lat, ahead.lng) > 0.001) {
-      flight.lastBearing = bearingDegrees(pos.lat, pos.lng, ahead.lat, ahead.lng);
-    }
+  const span = Math.max(1, end - start) / 1000;
+  const elapsed = clamp((nowMs() - start) / 1000, 0, span);
+  const t = elapsed / span;
+  const loc = paintFlown(flight.legPaths, flight.legFlown, legs, elapsed);
+  const ahead = locateOnLegs(legs, Math.min(span, elapsed + span * 0.01));
+  if (haversineKm(loc.position.lat, loc.position.lng, ahead.position.lat, ahead.position.lng) > 0.001) {
+    flight.lastBearing = bearingDegrees(
+      loc.position.lat,
+      loc.position.lng,
+      ahead.position.lat,
+      ahead.position.lng,
+    );
   }
-  updatePlane(pos, flight.lastBearing);
-  const stamp = performance.now();
-  if (stamp - flight.lastTrail > 180) {
-    const index = Math.round(t * (flight.path.length - 1));
-    flight.flown.setLatLngs(flight.path.slice(0, index + 1).map((point) => [point.lat, point.lng]));
-    flight.lastTrail = stamp;
-  }
-  renderFlightHud(letter, t, Math.max(0, (end - nowMs()) / 1000));
+  setCourier(loc.mode, loc.position, flight.lastBearing);
+  renderFlightHud(letter, t, Math.max(0, (end - nowMs()) / 1000), loc);
+  paintTraffic();
   if (t >= 1) {
     if (!flight.arrived) {
       flight.arrived = true;
@@ -756,8 +980,15 @@ async function showFlight(id, token) {
   syncClock(letter.serverNow);
   showOnly("flight");
   $("btn-open").onclick = () => navigate(`#/read/${id}`);
+  await loadActivity().catch(() => {});
+  if (token !== renderToken) return;
   mountFlight(letter);
-  renderFlightHud(letter, letter.progress, letter.etaSeconds || 0);
+  const legs = letterLegs(letter);
+  const elapsed = letter.departedAt
+    ? clamp((nowMs() - Date.parse(letter.departedAt)) / 1000, 0, letter.durationSeconds || 1)
+    : 0;
+  const loc = locateOnLegs(legs, elapsed);
+  renderFlightHud(letter, letter.progress, letter.etaSeconds || 0, loc);
   state.raf = requestAnimationFrame(() => flightFrame(token));
   state.poll = setInterval(async () => {
     if (state.view !== "flight" || token !== renderToken) return;
@@ -765,6 +996,7 @@ async function showFlight(id, token) {
       const fresh = await api(`/api/letters/${id}`);
       syncClock(fresh.serverNow);
       if (state.flight) state.flight.letter = { ...state.flight.letter, ...fresh, from: fresh.from, to: fresh.to };
+      await loadActivity();
     } catch {
       /* keep drawing from the last known schedule */
     }
@@ -803,6 +1035,7 @@ function clearMap() {
     state.map.remove();
     state.map = null;
   }
+  state.dots = new Map();
 }
 
 function presentDraw(quote) {
@@ -810,13 +1043,21 @@ function presentDraw(quote) {
   state.fromId = quote.from.id;
   state.toId = quote.to.id;
   showOnly("draw");
+  const legs = letterLegs(quote);
   setText("draw-name", quote.to.name);
   setText("draw-where", whereLine(quote.to));
   setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatDuration(quote.durationSeconds)}`);
+  setText("draw-via", legVia(legs));
+  renderLegend("draw-legend", legs, -1);
   paintSenderChips();
   $("btn-write").disabled = quote.to.cityId === quote.from.id;
   clearMap();
-  const view = mountRouteMap($("draw-map"), quote.from, quote.to, { showPlane: false, padBottom: 250 });
+  const view = mountRouteMap($("draw-map"), quote.from, quote.to, {
+    legs,
+    showPlane: false,
+    padBottom: 300,
+    badges: true,
+  });
   state.map = view.map;
 }
 
@@ -849,7 +1090,10 @@ async function showDraw(params, token) {
   }
   const quote = await api(`/api/route?fromId=${encodeURIComponent(fromId)}&toId=${encodeURIComponent(params.get("id"))}`);
   if (token !== renderToken) return;
+  await loadActivity().catch(() => {});
+  if (token !== renderToken) return;
   presentDraw(quote);
+  startAmbient(token);
 }
 
 async function redrawRecipient() {
@@ -883,6 +1127,7 @@ async function render() {
       showOnly("home");
       await refreshHome();
       if (token !== renderToken) return;
+      startAmbient(token);
       state.poll = setInterval(() => {
         refreshHome().catch(() => {});
       }, 3000);

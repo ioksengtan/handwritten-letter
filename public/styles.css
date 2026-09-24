@@ -293,6 +293,12 @@ button:focus-visible {
 
 .estimate span { color: var(--muted); }
 
+.estimate .via {
+  flex: 1 0 100%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .estimate.warn {
   color: var(--muted);
   display: block;
@@ -350,6 +356,8 @@ button:focus-visible {
 .leaflet-container { font-family: inherit; background: #e3eef3; }
 
 .leaflet-bottom { bottom: 148px; }
+
+.view-flight .leaflet-bottom { bottom: 230px; }
 
 .leaflet-control-zoom a {
   width: 32px;
@@ -448,7 +456,122 @@ button:focus-visible {
   font-size: 14px;
 }
 
-.view-draw .leaflet-bottom { bottom: 236px; }
+.view-draw .leaflet-bottom { bottom: 300px; }
+
+.view-draw .sheet {
+  max-height: 54dvh;
+  overflow: auto;
+}
+
+.activity {
+  margin: 2px 16px 4px;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.activity p,
+.travel-count {
+  margin: 0;
+  padding: 12px 14px 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.travel-count {
+  padding: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#home-map {
+  height: 168px;
+  pointer-events: none;
+}
+
+.via {
+  margin: 0 0 8px;
+  color: #3e5166;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mode-now {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.leg-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.leg-legend .leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.leg-legend .leg.is-active {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.leg-legend i {
+  display: block;
+  width: 16px;
+  height: 3px;
+  border-radius: 99px;
+}
+
+.leg-arrow {
+  color: #9aa8b5;
+  font-size: 12px;
+}
+
+.mode-badge,
+.traffic-icon {
+  background: transparent;
+  border: none;
+}
+
+.mode-badge-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 4px rgba(20, 40, 60, 0.22);
+}
+
+.mode-badge-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dot-hub {
+  width: 8px;
+  height: 8px;
+  background: #fff;
+  box-shadow: 0 0 0 2px #5c6b7a;
+}
+
+.traffic-dot {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(36, 62, 104, 0.55);
+  box-shadow: 0 0 0 4px rgba(36, 62, 104, 0.12);
+}
 
 .compose-body:has(#recipient-banner:not([hidden])) .paper-frame {
   height: min(32dvh, 280px);
