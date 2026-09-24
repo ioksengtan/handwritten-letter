@@ -182,6 +182,10 @@ export function createApp({
     };
   }
 
+  app.get("/api/health", (req, res) => {
+    res.json({ ok: true });
+  });
+
   app.get("/api/places", (req, res) => {
     res.json(PLACES);
   });
@@ -310,7 +314,7 @@ export function createApp({
     const existing = readLetter(req.params.id, nowMs);
     if (!existing) return res.status(404).json({ error: "找不到這封信" });
     if (existing.status !== "draft") {
-      return res.status(409).json({ error: "這封信已經扔出" });
+      return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
     const geo = buildGeometry(
@@ -343,7 +347,7 @@ export function createApp({
     const existing = readLetter(req.params.id, nowMs);
     if (!existing) return res.status(404).json({ error: "找不到這封信" });
     if (existing.status !== "draft") {
-      return res.status(409).json({ error: "這封信已經扔出" });
+      return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
     const geo = buildGeometry(
@@ -402,7 +406,8 @@ const isMain =
 
 if (isMain) {
   const port = Number(process.env.PORT) || 3000;
-  createApp().listen(port, () => {
+  const host = process.env.HOST || "0.0.0.0";
+  createApp().listen(port, host, () => {
     console.log(`在路上  http://localhost:${port}`);
   });
 }

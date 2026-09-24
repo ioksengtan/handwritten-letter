@@ -179,6 +179,41 @@ export function legVia(legs) {
   return legs.map((leg) => `${MODE_LABEL[leg.mode]}到${leg.to.name}`).join(" → ");
 }
 
+/**
+ * Lived-in progress line for the leg the courier is on.
+ * This is copy only — it does not change timing.
+ */
+export function legProgressLine(leg, { index = 0, count = 1 } = {}) {
+  if (!leg) return "";
+  const dest = leg.to?.name || "目的地";
+  const last = index >= count - 1;
+  if (leg.mode === "plane") return `飛機上，前往${dest}`;
+  if (leg.mode === "train") return `火車上，前往${dest}`;
+  if (leg.mode === "road" && last && count > 1) return `最後一段公路，送往${dest}`;
+  if (leg.mode === "road" && /機場/.test(dest)) return `公路上，送往${dest}`;
+  return `公路上，前往${dest}`;
+}
+
+/**
+ * Short beat shown when the courier crosses from one leg into the next.
+ * Names the hub just reached. Not an airline schedule.
+ */
+export function transferBeat(prev, next) {
+  if (!prev || !next) return null;
+  const hub = prev.to?.name;
+  if (!hub) return null;
+  let action = "轉運";
+  if (next.mode === "plane") action = "轉運，改搭飛機";
+  else if (next.mode === "train") action = "轉運，改搭火車";
+  else if (next.mode === "road") action = "轉運，改走公路";
+  return {
+    hub,
+    title: `正在${action}`,
+    line: `正在${hub}${action}`,
+    mode: next.mode,
+  };
+}
+
 let backgroundMemo = null;
 
 export function backgroundPlans() {

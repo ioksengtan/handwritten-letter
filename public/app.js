@@ -8,14 +8,13 @@ import {
 } from "/shared/flight.js";
 import { PLACES, findPlace, findPreset } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
-import { MODE_COLOR, MODE_LABEL, legVia, planCourier } from "/shared/route.js";
+import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
 const PLANE_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
-  <path d="M32 6 L56 52 L32 42 L8 52 Z" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7" stroke-linejoin="round"/>
-  <path d="M32 16 L32 42" stroke="#1d2a3a" stroke-width="1.1" opacity="0.35"/>
+  <path d="M32 3 C34.2 3 36 8 36 14 L36 26 L58 34 L58 39 L36 35 L36 48 L46 56 L46 60 L32 55 L18 60 L18 56 L28 48 L28 35 L6 39 L6 34 L28 26 L28 14 C28 8 29.8 3 32 3 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
 </svg>`;
 const TRUCK_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
@@ -32,7 +31,6 @@ const TRAIN_SVG = `
   <circle cx="40" cy="52" r="3.4" fill="#1d2a3a"/>
 </svg>`;
 const MODE_SVG = { road: TRUCK_SVG, train: TRAIN_SVG, plane: PLANE_SVG };
-const MODE_NOW = { road: "現在走公路", train: "現在搭火車", plane: "現在搭飛機" };
 
 const state = {
   view: "home",
@@ -56,6 +54,10 @@ const state = {
   poll: 0,
   flight: null,
   submitting: false,
+  postLetterId: null,
+  postTimers: [],
+  ceremonyTimer: 0,
+  ceremonySkip: false,
 };
 
 let renderToken = 0;
@@ -179,6 +181,15 @@ function stopLoops() {
   state.raf = 0;
   if (state.poll) clearInterval(state.poll);
   state.poll = 0;
+  if (state.ceremonyTimer) clearTimeout(state.ceremonyTimer);
+  state.ceremonyTimer = 0;
+  const flight = state.flight;
+  if (flight) {
+    for (const id of flight.cameraTimers || []) clearTimeout(id);
+    if (flight.transferTimer) clearTimeout(flight.transferTimer);
+    if (flight.glanceTimer) clearTimeout(flight.glanceTimer);
+  }
+  hideTransfer();
   if (state.map) {
     state.map.remove();
     state.map = null;
@@ -186,6 +197,57 @@ function stopLoops() {
   state.dots = new Map();
   state.mapUnwrap = false;
   state.flight = null;
+}
+
+function cancelPost() {
+  for (const id of state.postTimers) clearTimeout(id);
+  state.postTimers = [];
+  state.postLetterId = null;
+  const stage = $("post-stage");
+  if (!stage) return;
+  stage.hidden = true;
+  stage.classList.remove("is-playing", "is-fading");
+  $("post-letter").removeAttribute("src");
+}
+
+function finishPost() {
+  state.postTimers = [];
+  state.postLetterId = null;
+  const stage = $("post-stage");
+  stage.hidden = true;
+  stage.classList.remove("is-playing", "is-fading");
+  $("post-letter").removeAttribute("src");
+}
+
+function playPost(letterId, imageUrl) {
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    navigate(`#/flight/${letterId}`);
+    return;
+  }
+  state.postLetterId = letterId;
+  const stage = $("post-stage");
+  const img = $("post-letter");
+  img.alt = "";
+  img.src = imageUrl;
+  stage.hidden = false;
+  stage.classList.remove("is-playing", "is-fading");
+  void stage.offsetWidth;
+  stage.classList.add("is-playing");
+  state.postTimers = [
+    setTimeout(() => {
+      if (state.postLetterId !== letterId) return;
+      navigate(`#/flight/${letterId}?intro=1`);
+    }, 1450),
+    setTimeout(() => {
+      if (state.postLetterId !== letterId) return;
+      stage.classList.add("is-fading");
+    }, 2050),
+    setTimeout(() => {
+      if (state.postLetterId !== letterId) return;
+      finishPost();
+    }, 2700),
+  ];
 }
 
 function renderHomeList(letters) {
@@ -198,7 +260,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!letters.length) {
-    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試飛。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試寄。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -212,11 +274,16 @@ function renderHomeList(letters) {
       let detail = "草稿";
       let extra = "";
       if (letter.status === "in_flight") {
-        const mode = letter.mode ? `${esc(MODE_LABEL[letter.mode] || "")} · ` : "";
+        const index = letter.legIndex ?? 0;
+        const legs = letter.legs?.length ? letter.legs : null;
+        const story = legs
+          ? legProgressLine(legs[index] || legs[0], { index, count: legs.length })
+          : (MODE_LABEL[letter.mode] || "");
+        const mode = story ? `${esc(story)} · ` : "";
         detail = `${mode}剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatDuration(letter.etaSeconds))}後抵達`;
         extra = `<span class="mini-track"><span style="width:${Math.round(letter.progress * 100)}%"></span></span>`;
       } else if (letter.status === "delivered") {
-        detail = "已抵達 · 打開";
+        detail = "已抵達 · 拆信";
       }
       return `<button type="button" class="card" data-id="${esc(letter.id)}" data-status="${esc(letter.status)}">
         <span><b>${route}</b><small>${detail}</small>${extra}</span>
@@ -591,7 +658,7 @@ async function submitLetter(launch) {
     return;
   }
   state.submitting = true;
-  $("btn-throw").disabled = true;
+  $("btn-send").disabled = true;
   $("btn-save").disabled = true;
   try {
     const body = {
@@ -618,12 +685,13 @@ async function submitLetter(launch) {
         body: JSON.stringify(body),
       });
     }
-    navigate(launch ? `#/flight/${letter.id}` : "#/");
+    if (launch) playPost(letter.id, body.imageDataUrl);
+    else navigate("#/");
   } catch (err) {
     showToast(err.message);
   } finally {
     state.submitting = false;
-    $("btn-throw").disabled = false;
+    $("btn-send").disabled = false;
     $("btn-save").disabled = false;
   }
 }
@@ -664,14 +732,13 @@ function addTiles(map) {
   map.getPane("plane").style.zIndex = 640;
   map.createPane("traffic");
   map.getPane("traffic").style.zIndex = 450;
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    attribution: "&copy; OpenStreetMap &copy; CARTO",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
 }
 
-function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom = 196, badges = false } = {}) {
+function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom = 196, badges = false, intro = false } = {}) {
   const routeLegs = legs?.length ? legs : letterLegs({ from, to });
   const legPaths = sampleLegs(routeLegs);
   const map = L.map(container, {
@@ -754,21 +821,65 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
   }
 
   const all = legPaths.flat().map((point) => [point.lat, point.lng]);
+  const bounds = L.latLngBounds(all);
   const fit = () => {
     map.invalidateSize();
-    map.fitBounds(all, {
+    map.fitBounds(bounds, {
       paddingTopLeft: [36, 72],
       paddingBottomRight: [36, padBottom],
       animate: false,
     });
   };
-  fit();
-  requestAnimationFrame(fit);
+  if (intro) {
+    map.setView([origin.lat, origin.lng], 12, { animate: false });
+    requestAnimationFrame(() => {
+      if (container.__map === map) map.invalidateSize();
+    });
+  } else {
+    fit();
+    requestAnimationFrame(fit);
+  }
+  const first = legPaths[0];
+  const followPoint = first[Math.min(first.length - 1, Math.max(1, Math.round((first.length - 1) * 0.45)))];
   state.mapUnwrap = true;
   state.originLng = origin.lng;
   state.dots = new Map();
   container.__map = map;
-  return { map, legPaths, legFlown, plane, legs: routeLegs, originLng: origin.lng };
+  return {
+    map,
+    legPaths,
+    legFlown,
+    plane,
+    legs: routeLegs,
+    originLng: origin.lng,
+    bounds,
+    originPoint: origin,
+    followPoint,
+    padBottom,
+  };
+}
+
+function playDepartureCamera(map, origin, follow, bounds, padBottom) {
+  const timers = [];
+  const alive = () => state.map === map;
+  const later = (delay, fn) => {
+    timers.push(setTimeout(fn, delay));
+  };
+  later(180, () => {
+    if (!alive()) return;
+    map.invalidateSize();
+    map.flyTo([follow.lat, follow.lng], 9, { duration: 1.15, easeLinearity: 0.25 });
+  });
+  later(1560, () => {
+    if (!alive()) return;
+    map.flyToBounds(bounds, {
+      paddingTopLeft: [36, 72],
+      paddingBottomRight: [36, padBottom],
+      duration: 1.2,
+      easeLinearity: 0.22,
+    });
+  });
+  return timers;
 }
 
 function renderLegend(id, legs, activeIndex) {
@@ -796,10 +907,18 @@ function paintFlown(legPaths, legFlown, legs, elapsed) {
   return loc;
 }
 
-function mountFlight(letter) {
+function mountFlight(letter, { intro = false } = {}) {
   const legs = letterLegs(letter);
-  const view = mountRouteMap($("map"), letter.from, letter.to, { legs, showPlane: true, padBottom: 250 });
+  const view = mountRouteMap($("map"), letter.from, letter.to, {
+    legs,
+    showPlane: true,
+    padBottom: 250,
+    intro,
+  });
   state.map = view.map;
+  const cameraTimers = intro
+    ? playDepartureCamera(view.map, view.originPoint, view.followPoint, view.bounds, view.padBottom)
+    : [];
   state.flight = {
     letter,
     legs,
@@ -809,7 +928,12 @@ function mountFlight(letter) {
     originLng: view.originLng,
     shownMode: legs[0].mode,
     lastBearing: bearingDegrees(legs[0].from.lat, legs[0].from.lng, legs[0].to.lat, legs[0].to.lng),
-    arrived: false,
+    arrived: letter.status === "delivered",
+    seenLeg: null,
+    cameraTimers,
+    introUntil: intro ? Date.now() + 3400 : 0,
+    transferTimer: 0,
+    glanceTimer: 0,
   };
 }
 
@@ -841,10 +965,11 @@ function renderFlightHud(letter, progress, etaSeconds, loc) {
     $("btn-open").hidden = false;
     $("flight-track").hidden = true;
   } else {
-    const mode = loc?.mode || letter.mode;
-    setText("flight-mode", MODE_NOW[mode] || "");
-    $("flight-mode").style.color = MODE_COLOR[mode] || "";
-    renderLegend("flight-legend", legs, loc ? loc.legIndex : letter.legIndex ?? 0);
+    const index = loc ? loc.legIndex : (letter.legIndex ?? 0);
+    const leg = legs[index] || legs[0];
+    setText("flight-mode", legProgressLine(leg, { index, count: legs.length }));
+    $("flight-mode").style.color = "";
+    renderLegend("flight-legend", legs, index);
     const secs = Math.ceil(etaSeconds);
     setText("flight-eta", secs <= 1 ? "即將抵達" : `${formatDuration(secs)}後抵達`);
     const remain = loc ? loc.remainingKm : letter.remainingKm;
@@ -958,11 +1083,13 @@ function flightFrame(token) {
     );
   }
   setCourier(loc.mode, loc.position, flight.lastBearing);
+  noteLegChange(loc);
   renderFlightHud(letter, t, Math.max(0, (end - nowMs()) / 1000), loc);
   paintTraffic();
   if (t >= 1) {
     if (!flight.arrived) {
       flight.arrived = true;
+      hideTransfer();
       api(`/api/letters/${letter.id}`).catch(() => {});
     }
     return;
@@ -970,7 +1097,71 @@ function flightFrame(token) {
   state.raf = requestAnimationFrame(() => flightFrame(token));
 }
 
-async function showFlight(id, token) {
+function hideTransfer() {
+  const banner = $("transfer-banner");
+  if (!banner) return;
+  banner.hidden = true;
+  banner.classList.remove("is-on");
+}
+
+function presentTransfer(beat, hubPoint) {
+  const flight = state.flight;
+  if (!flight || !beat) return;
+  const banner = $("transfer-banner");
+  $("transfer-kicker").textContent = beat.hub;
+  $("transfer-title").textContent = beat.title;
+  $("transfer-mark").textContent = MODE_LABEL[beat.mode] || "";
+  banner.hidden = false;
+  banner.classList.remove("is-on");
+  void banner.offsetWidth;
+  banner.classList.add("is-on");
+  if (flight.transferTimer) clearTimeout(flight.transferTimer);
+  flight.transferTimer = setTimeout(() => {
+    banner.hidden = true;
+    banner.classList.remove("is-on");
+  }, 3400);
+  const root = flight.plane?.getElement();
+  if (root) {
+    root.classList.add("is-transfer");
+    setTimeout(() => root.classList.remove("is-transfer"), 900);
+  }
+  glanceAtHub(hubPoint);
+}
+
+function glanceAtHub(point) {
+  const flight = state.flight;
+  const map = state.map;
+  if (!map || !flight || !point) return;
+  if (flight.introUntil && Date.now() < flight.introUntil) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (flight.glanceTimer) clearTimeout(flight.glanceTimer);
+  const zoom = map.getZoom();
+  const center = map.getCenter();
+  const back = [center.lat, center.lng];
+  const nextZoom = Math.min(9, Math.max(zoom + 1.6, 7));
+  map.flyTo([point.lat, alignLongitude(point.lng, flight.originLng)], nextZoom, { duration: 0.7 });
+  flight.glanceTimer = setTimeout(() => {
+    if (state.map !== map) return;
+    map.flyTo(back, zoom, { duration: 0.85 });
+  }, 1700);
+}
+
+function noteLegChange(loc) {
+  const flight = state.flight;
+  if (!flight || loc.legIndex == null) return;
+  if (flight.seenLeg == null) {
+    flight.seenLeg = loc.legIndex;
+    return;
+  }
+  if (loc.legIndex <= flight.seenLeg) return;
+  flight.seenLeg = loc.legIndex;
+  const prev = flight.legs[loc.legIndex - 1];
+  const next = flight.legs[loc.legIndex];
+  const beat = transferBeat(prev, next);
+  if (beat) presentTransfer(beat, next.from);
+}
+
+async function showFlight(id, token, params) {
   const letter = await api(`/api/letters/${id}`);
   if (token !== renderToken) return;
   if (letter.status === "draft") {
@@ -978,18 +1169,20 @@ async function showFlight(id, token) {
     return;
   }
   syncClock(letter.serverNow);
+  const intro = params?.get("intro") === "1" && letter.status !== "delivered";
   showOnly("flight");
   $("btn-open").onclick = () => navigate(`#/read/${id}`);
-  await loadActivity().catch(() => {});
-  if (token !== renderToken) return;
-  mountFlight(letter);
+  mountFlight(letter, { intro });
+  if (intro) history.replaceState(null, "", `#/flight/${id}`);
   const legs = letterLegs(letter);
   const elapsed = letter.departedAt
     ? clamp((nowMs() - Date.parse(letter.departedAt)) / 1000, 0, letter.durationSeconds || 1)
     : 0;
   const loc = locateOnLegs(legs, elapsed);
+  if (state.flight) state.flight.seenLeg = loc.legIndex;
   renderFlightHud(letter, letter.progress, letter.etaSeconds || 0, loc);
   state.raf = requestAnimationFrame(() => flightFrame(token));
+  loadActivity().catch(() => {});
   state.poll = setInterval(async () => {
     if (state.view !== "flight" || token !== renderToken) return;
     try {
@@ -1015,8 +1208,10 @@ async function showRead(id, token) {
     return;
   }
   showOnly("read");
+  const ceremony = $("ceremony");
+  ceremony.classList.remove("is-playing", "is-open");
+  state.ceremonySkip = false;
   const img = $("read-image");
-  img.src = letter.imageUrl;
   img.alt = `寄給${pinLabel(letter.to)}的信`;
   const when = new Date(letter.deliveredAt || letter.arrivesAt);
   const stamp = when.toLocaleString("zh-TW", {
@@ -1028,6 +1223,58 @@ async function showRead(id, token) {
   const dest = letter.to.city || letter.to.name;
   const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
   $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
+  $("postmark-place").textContent = dest;
+  $("postmark-time").textContent = when.toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" });
+  fillAftertaste(letter);
+  let started = false;
+  const go = () => {
+    if (started || token !== renderToken) return;
+    started = true;
+    startCeremony();
+  };
+  img.onload = go;
+  img.onerror = () => {
+    if (token !== renderToken) return;
+    showToast("信面還打不開");
+    go();
+  };
+  if (!letter.imageUrl) {
+    showToast("信面還打不開");
+    startCeremony();
+    return;
+  }
+  img.src = `${letter.imageUrl}?open=1`;
+  if (img.complete) go();
+}
+
+function fillAftertaste(letter) {
+  const legs = letterLegs(letter);
+  const seconds = Number(letter.durationSeconds) || 0;
+  const sequence = legs.map((leg) => MODE_LABEL[leg.mode] || "").filter(Boolean).join(" → ");
+  const how = legs.length > 1 ? sequence : `這趟走${sequence}`;
+  $("read-after").innerHTML =
+    `<p><b>${esc(formatDistance(letter.distanceKm))}</b> · <b>${esc(formatDuration(seconds))}</b> · <b>${legs.length}</b> 段路</p>` +
+    `<p class="after-modes">${esc(how)}</p>`;
+}
+
+function settleCeremony() {
+  if (state.ceremonyTimer) clearTimeout(state.ceremonyTimer);
+  state.ceremonyTimer = 0;
+  const root = $("ceremony");
+  root.classList.remove("is-playing");
+  root.classList.add("is-open");
+}
+
+function startCeremony() {
+  const root = $("ceremony");
+  if (state.ceremonySkip || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    settleCeremony();
+    return;
+  }
+  root.classList.remove("is-open");
+  void root.offsetWidth;
+  root.classList.add("is-playing");
+  state.ceremonyTimer = setTimeout(settleCeremony, 2050);
 }
 
 function clearMap() {
@@ -1112,15 +1359,17 @@ async function redrawRecipient() {
 
 async function render() {
   const token = ++renderToken;
-  stopLoops();
   const { parts, params } = parseHash();
+  const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
+  if (!keepPost) cancelPost();
+  stopLoops();
   try {
     if (parts[0] === "compose") {
       await openCompose(params, token);
     } else if (parts[0] === "draw") {
       await showDraw(params, token);
     } else if (parts[0] === "flight" && parts[1]) {
-      await showFlight(parts[1], token);
+      await showFlight(parts[1], token, params);
     } else if (parts[0] === "read" && parts[1]) {
       await showRead(parts[1], token);
     } else {
@@ -1162,7 +1411,11 @@ function boot() {
   $("draw-back").addEventListener("click", () => navigate("#/"));
   $("flight-back").addEventListener("click", () => navigate("#/"));
   $("read-back").addEventListener("click", () => navigate("#/"));
-  $("btn-throw").addEventListener("click", () => submitLetter(true));
+  $("ceremony-skip").addEventListener("click", () => {
+    state.ceremonySkip = true;
+    settleCeremony();
+  });
+  $("btn-send").addEventListener("click", () => submitLetter(true));
   $("btn-save").addEventListener("click", () => submitLetter(false));
   $("btn-undo").addEventListener("click", undoStroke);
   $("btn-clear").addEventListener("click", clearCanvas);

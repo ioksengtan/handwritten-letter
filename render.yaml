@@ -1,0 +1,15 @@
+# Render Blueprint for 在路上.
+# Free web services have an ephemeral disk: data/ is wiped on redeploy
+# and can disappear after the instance spins down. See README.
+services:
+  - type: web
+    name: handwritten-letter
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "18"

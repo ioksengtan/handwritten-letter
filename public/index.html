@@ -7,7 +7,7 @@
     <title>在路上</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 7.5 L14 2.5 L9 14 L7.5 8.5 Z' fill='%23243e68'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1.2' y='3' width='13.6' height='10' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3Cpath d='M1.2 3.4 L8 9 L14.8 3.4' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/styles.css" />
@@ -86,7 +86,7 @@
         </div>
         <div class="dock dock-split">
           <button type="button" class="btn" id="btn-save">儲存草稿</button>
-          <button type="button" class="btn primary" id="btn-throw">扔出</button>
+          <button type="button" class="btn primary" id="btn-send">寄出</button>
         </div>
       </section>
 
@@ -122,6 +122,13 @@
             <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
+        <div id="transfer-banner" class="transfer-banner" role="status" aria-live="polite" hidden>
+          <div class="transfer-card">
+            <p id="transfer-kicker" class="transfer-kicker"></p>
+            <p id="transfer-title" class="transfer-title"></p>
+            <span id="transfer-mark" class="transfer-mark"></span>
+          </div>
+        </div>
         <div class="sheet" id="flight-sheet">
           <p class="travel-count" id="flight-travel"></p>
           <p class="route" id="flight-route"></p>
@@ -130,7 +137,7 @@
           <p class="remain" id="flight-remain"></p>
           <div class="leg-legend" id="flight-legend"></div>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
-          <button type="button" class="btn primary" id="btn-open" hidden>打開信</button>
+          <button type="button" class="btn primary" id="btn-open" hidden>拆信</button>
         </div>
       </section>
 
@@ -144,12 +151,41 @@
           <h1>來信</h1>
         </header>
         <div class="read-body">
-          <figure class="letter-card">
-            <img id="read-image" alt="" />
-          </figure>
-          <p class="caption" id="read-caption"></p>
+          <div id="ceremony" class="ceremony">
+            <div class="ceremony-stack">
+              <figure class="letter-card ceremony-letter">
+                <img id="read-image" alt="" />
+              </figure>
+              <div class="envelope" aria-hidden="true">
+                <div class="envelope-body"></div>
+                <div class="envelope-flap"></div>
+                <div class="seal"></div>
+                <div class="postmark">
+                  <span>在路上</span>
+                  <b id="postmark-place"></b>
+                  <small id="postmark-time"></small>
+                </div>
+              </div>
+              <button type="button" id="ceremony-skip" class="ceremony-hit" aria-label="拆開這封信"></button>
+            </div>
+            <p class="caption" id="read-caption"></p>
+            <div class="aftertaste" id="read-after"></div>
+          </div>
         </div>
       </section>
+      <div id="post-stage" class="post-stage" hidden>
+        <div class="post-letter-slot">
+          <div class="post-letter-wrap">
+            <img id="post-letter" alt="" />
+            <p class="post-stamp" aria-hidden="true"><span>在路上</span>已寄出</p>
+          </div>
+        </div>
+        <div class="postbox" aria-hidden="true">
+          <div class="postbox-cap"></div>
+          <div class="postbox-slot"></div>
+          <span class="postbox-mark">郵</span>
+        </div>
+      </div>
     </div>
     <script src="/vendor/leaflet/leaflet.js"></script>
     <script type="module" src="/app.js"></script>
