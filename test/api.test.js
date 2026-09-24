@@ -168,6 +168,27 @@ test("draft can be saved and thrown later", async () => {
     body: JSON.stringify({}),
   });
   assert.equal(twice.status, 409);
+
+  const another = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "taipei101",
+      imageDataUrl: PNG,
+    }),
+  });
+  const sent = await send(`${base}/api/letters/${another.body.id}/send`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.status, "in_flight");
+  assert.equal(sent.body.pace, "playable-fast");
+  const sentTwice = await send(`${base}/api/letters/${another.body.id}/send`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  assert.equal(sentTwice.status, 409);
 });
 
 test("romantic-slow stretches the same route", async () => {
