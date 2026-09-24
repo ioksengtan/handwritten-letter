@@ -9,9 +9,15 @@ import {
 import { PLACES, findPlace, findPreset } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
 import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
+import { formatPostalDate, formatPostalStamp } from "/shared/clock.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
+const INK_LINE = {
+  road: { rest: "3 8", flown: null, weight: 2.3, flownWeight: 3.6 },
+  train: { rest: "10 4 2 5", flown: null, weight: 2.3, flownWeight: 3.5 },
+  plane: { rest: "1 9", flown: "14 4", weight: 2.05, flownWeight: 3.35 },
+};
 const PLANE_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
   <path d="M32 3 C34.2 3 36 8 36 14 L36 26 L58 34 L58 39 L36 35 L36 48 L46 56 L46 60 L32 55 L18 60 L18 56 L28 48 L28 35 L6 39 L6 34 L28 26 L28 14 C28 8 29.8 3 32 3 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
@@ -26,7 +32,7 @@ const TRUCK_SVG = `
 const TRAIN_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
   <rect x="18" y="8" width="28" height="40" rx="8" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
-  <rect x="24" y="16" width="16" height="10" rx="2" fill="#d5e4f2"/>
+  <rect x="24" y="16" width="16" height="10" rx="2" fill="#d9cbb6"/>
   <circle cx="24" cy="52" r="3.4" fill="#1d2a3a"/>
   <circle cx="40" cy="52" r="3.4" fill="#1d2a3a"/>
 </svg>`;
@@ -761,9 +767,12 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
   const routeLegs = legs?.length ? legs : letterLegs({ from, to });
   const legPaths = sampleLegs(routeLegs);
   const map = L.map(container, {
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: true,
     worldCopyJump: true,
+    touchZoom: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: true,
   });
   addTiles(map);
 
@@ -771,17 +780,25 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
   routeLegs.forEach((leg, index) => {
     const path = legPaths[index];
     const latLngs = path.map((point) => [point.lat, point.lng]);
+    const ink = INK_LINE[leg.mode] || INK_LINE.plane;
+    const color = MODE_COLOR[leg.mode] || MODE_COLOR.plane;
     L.polyline(latLngs, {
-      color: MODE_COLOR[leg.mode],
-      weight: 3,
-      opacity: 0.4,
-      dashArray: "1 8",
+      color,
+      weight: ink.weight,
+      opacity: 0.58,
+      dashArray: ink.rest,
       lineCap: "round",
+      lineJoin: "round",
+      className: "ink-route",
     }).addTo(map);
     legFlown.push(L.polyline([], {
-      color: MODE_COLOR[leg.mode],
-      weight: 3.5,
-      opacity: 0.95,
+      color,
+      weight: ink.flownWeight,
+      opacity: 0.94,
+      dashArray: ink.flown || undefined,
+      lineCap: "round",
+      lineJoin: "round",
+      className: "ink-route",
     }).addTo(map));
     if (badges) {
       const mid = path[Math.floor(path.length / 2)];
@@ -908,7 +925,7 @@ function renderLegend(id, legs, activeIndex) {
   root.dataset.key = key;
   root.innerHTML = legs.map((leg, index) => {
     const active = index === activeIndex ? " is-active" : "";
-    return `<span class="leg${active}"><i style="background:${MODE_COLOR[leg.mode]}"></i>${esc(MODE_LABEL[leg.mode])}</span>`;
+    return `<span class="leg leg-${esc(leg.mode)}${active}"><i></i>${esc(MODE_LABEL[leg.mode])}</span>`;
   }).join(`<span class="leg-arrow">→</span>`);
 }
 
@@ -975,6 +992,7 @@ function renderFlightHud(letter, progress, etaSeconds, loc) {
   const legs = state.flight?.legs || letterLegs(letter);
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
+  $("flight-sheet")?.classList.toggle("is-arrived", progress >= 1);
   if (progress >= 1) {
     setText("flight-mode", "已送到");
     $("flight-mode").style.color = "";
@@ -1232,18 +1250,13 @@ async function showRead(id, token) {
   state.ceremonySkip = false;
   const img = $("read-image");
   img.alt = `寄給${pinLabel(letter.to)}的信`;
-  const when = new Date(letter.deliveredAt || letter.arrivesAt);
-  const stamp = when.toLocaleString("zh-TW", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const arrivedAt = letter.deliveredAt || letter.arrivesAt;
+  const stamp = formatPostalStamp(arrivedAt);
   const dest = letter.to.city || letter.to.name;
   const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
   $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
   $("postmark-place").textContent = dest;
-  $("postmark-time").textContent = when.toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" });
+  $("postmark-time").textContent = formatPostalDate(arrivedAt);
   fillAftertaste(letter);
   let started = false;
   const go = () => {
