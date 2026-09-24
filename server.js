@@ -342,7 +342,7 @@ export function createApp({
     res.json(toPublic(letter, nowMs));
   });
 
-  app.post("/api/letters/:id/throw", (req, res) => {
+  function launchDraft(req, res) {
     const nowMs = now();
     const existing = readLetter(req.params.id, nowMs);
     if (!existing) return res.status(404).json({ error: "找不到這封信" });
@@ -379,7 +379,10 @@ export function createApp({
       updatedAt: departed.toISOString(),
     });
     res.json(toPublic(letter, nowMs));
-  });
+  }
+
+  app.post("/api/letters/:id/throw", launchDraft);
+  app.post("/api/letters/:id/send", launchDraft);
 
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);

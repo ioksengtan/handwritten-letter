@@ -123,10 +123,10 @@
           </svg>
         </button>
         <div id="transfer-banner" class="transfer-banner" role="status" aria-live="polite" hidden>
-          <div class="transfer-card">
-            <p id="transfer-kicker" class="transfer-kicker"></p>
-            <p id="transfer-title" class="transfer-title"></p>
-            <span id="transfer-mark" class="transfer-mark"></span>
+          <div class="postal-sticker transfer-sticker">
+            <p id="transfer-kicker" class="sticker-place"></p>
+            <p id="transfer-title" class="sticker-line"></p>
+            <p id="transfer-mark" class="sticker-mode"></p>
           </div>
         </div>
         <div class="sheet" id="flight-sheet">
@@ -156,16 +156,19 @@
               <figure class="letter-card ceremony-letter">
                 <img id="read-image" alt="" />
               </figure>
-              <div class="envelope" aria-hidden="true">
+              <div class="envelope-lining" aria-hidden="true"></div>
+              <div class="envelope-pocket" aria-hidden="true">
                 <div class="envelope-body"></div>
-                <div class="envelope-flap"></div>
-                <div class="seal"></div>
                 <div class="postmark">
                   <span>在路上</span>
                   <b id="postmark-place"></b>
                   <small id="postmark-time"></small>
                 </div>
               </div>
+              <div class="envelope-flap" aria-hidden="true">
+                <div class="postage-seal"><span>寄</span></div>
+              </div>
+              <div class="tear-strip" aria-hidden="true"></div>
               <button type="button" id="ceremony-skip" class="ceremony-hit" aria-label="拆開這封信"></button>
             </div>
             <p class="caption" id="read-caption"></p>
@@ -177,13 +180,21 @@
         <div class="post-letter-slot">
           <div class="post-letter-wrap">
             <img id="post-letter" alt="" />
-            <p class="post-stamp" aria-hidden="true"><span>在路上</span>已寄出</p>
+            <p class="post-stamp" aria-hidden="true">
+              <i class="ink-bloom"></i>
+              <span class="stamp-ghost"><span>在路上</span>已寄出</span>
+              <span class="stamp-face"><span>在路上</span>已寄出</span>
+            </p>
           </div>
         </div>
         <div class="postbox" aria-hidden="true">
           <div class="postbox-cap"></div>
+          <div class="postbox-flap"></div>
           <div class="postbox-slot"></div>
-          <span class="postbox-mark">郵</span>
+          <div class="postbox-body">
+            <span class="postbox-mark">郵</span>
+            <span class="postbox-plate">在路上</span>
+          </div>
         </div>
       </div>
     </div>

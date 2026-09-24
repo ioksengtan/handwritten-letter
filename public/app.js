@@ -219,6 +219,17 @@ function finishPost() {
   $("post-letter").removeAttribute("src");
 }
 
+function alignIntoSlot() {
+  const stage = $("post-stage");
+  const letter = stage.querySelector(".post-letter-slot");
+  const slot = stage.querySelector(".postbox-slot");
+  if (!letter || !slot) return;
+  const letterBox = letter.getBoundingClientRect();
+  const slotBox = slot.getBoundingClientRect();
+  const dy = slotBox.top + slotBox.height * 0.45 - letterBox.top;
+  stage.style.setProperty("--into-slot", `${Math.max(80, Math.round(dy))}px`);
+}
+
 function playPost(letterId, imageUrl) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) {
@@ -229,25 +240,33 @@ function playPost(letterId, imageUrl) {
   const stage = $("post-stage");
   const img = $("post-letter");
   img.alt = "";
-  img.src = imageUrl;
   stage.hidden = false;
   stage.classList.remove("is-playing", "is-fading");
-  void stage.offsetWidth;
-  stage.classList.add("is-playing");
-  state.postTimers = [
-    setTimeout(() => {
-      if (state.postLetterId !== letterId) return;
-      navigate(`#/flight/${letterId}?intro=1`);
-    }, 1450),
-    setTimeout(() => {
-      if (state.postLetterId !== letterId) return;
-      stage.classList.add("is-fading");
-    }, 2050),
-    setTimeout(() => {
-      if (state.postLetterId !== letterId) return;
-      finishPost();
-    }, 2700),
-  ];
+  let started = false;
+  const start = () => {
+    if (started || state.postLetterId !== letterId) return;
+    started = true;
+    void stage.offsetWidth;
+    alignIntoSlot();
+    stage.classList.add("is-playing");
+    state.postTimers = [
+      setTimeout(() => {
+        if (state.postLetterId !== letterId) return;
+        navigate(`#/flight/${letterId}?intro=1`);
+      }, 1760),
+      setTimeout(() => {
+        if (state.postLetterId !== letterId) return;
+        stage.classList.add("is-fading");
+      }, 2140),
+      setTimeout(() => {
+        if (state.postLetterId !== letterId) return;
+        finishPost();
+      }, 3080),
+    ];
+  };
+  img.onload = start;
+  img.src = imageUrl;
+  if (img.complete) start();
 }
 
 function renderHomeList(letters) {
@@ -670,7 +689,7 @@ async function submitLetter(launch) {
     };
     let letter;
     if (state.draftId && launch) {
-      letter = await api(`/api/letters/${state.draftId}/throw`, {
+      letter = await api(`/api/letters/${state.draftId}/send`, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -865,18 +884,18 @@ function playDepartureCamera(map, origin, follow, bounds, padBottom) {
   const later = (delay, fn) => {
     timers.push(setTimeout(fn, delay));
   };
-  later(180, () => {
+  later(280, () => {
     if (!alive()) return;
     map.invalidateSize();
-    map.flyTo([follow.lat, follow.lng], 9, { duration: 1.15, easeLinearity: 0.25 });
+    map.flyTo([follow.lat, follow.lng], 9.5, { duration: 1.55, easeLinearity: 0.12 });
   });
-  later(1560, () => {
+  later(1980, () => {
     if (!alive()) return;
     map.flyToBounds(bounds, {
       paddingTopLeft: [36, 72],
       paddingBottomRight: [36, padBottom],
-      duration: 1.2,
-      easeLinearity: 0.22,
+      duration: 1.5,
+      easeLinearity: 0.12,
     });
   });
   return timers;
@@ -931,7 +950,7 @@ function mountFlight(letter, { intro = false } = {}) {
     arrived: letter.status === "delivered",
     seenLeg: null,
     cameraTimers,
-    introUntil: intro ? Date.now() + 3400 : 0,
+    introUntil: intro ? Date.now() + 4300 : 0,
     transferTimer: 0,
     glanceTimer: 0,
   };
@@ -1247,14 +1266,23 @@ async function showRead(id, token) {
   if (img.complete) go();
 }
 
+function countWord(n) {
+  return ["零", "一", "兩", "三", "四", "五", "六", "七", "八", "九"][n] || String(n);
+}
+
 function fillAftertaste(letter) {
   const legs = letterLegs(letter);
   const seconds = Number(letter.durationSeconds) || 0;
-  const sequence = legs.map((leg) => MODE_LABEL[leg.mode] || "").filter(Boolean).join(" → ");
-  const how = legs.length > 1 ? sequence : `這趟走${sequence}`;
+  const names = legs.map((leg) => MODE_LABEL[leg.mode] || "").filter(Boolean);
+  const sequence = names.join("、");
+  const transfers = Math.max(0, names.length - 1);
+  const km = formatDistance(letter.distanceKm);
+  const detail = transfers === 0
+    ? `${km}，${sequence}一段，沒有轉運。`
+    : `${km}，中途轉了${countWord(transfers)}次：${sequence}。`;
   $("read-after").innerHTML =
-    `<p><b>${esc(formatDistance(letter.distanceKm))}</b> · <b>${esc(formatDuration(seconds))}</b> · <b>${legs.length}</b> 段路</p>` +
-    `<p class="after-modes">${esc(how)}</p>`;
+    `<p class="after-warm">這封信在路上 <b>${esc(formatDuration(seconds))}</b>。</p>` +
+    `<p>${esc(detail)}</p>`;
 }
 
 function settleCeremony() {
@@ -1274,7 +1302,7 @@ function startCeremony() {
   root.classList.remove("is-open");
   void root.offsetWidth;
   root.classList.add("is-playing");
-  state.ceremonyTimer = setTimeout(settleCeremony, 2050);
+  state.ceremonyTimer = setTimeout(settleCeremony, 2680);
 }
 
 function clearMap() {
