@@ -5,9 +5,11 @@ import { findPlace } from "../shared/places.js";
 import { findRecipient } from "../shared/recipients.js";
 import {
   backgroundPlans,
+  legProgressLine,
   legVia,
   nearestHub,
   planCourier,
+  transferBeat,
 } from "../shared/route.js";
 
 function place(id) {
@@ -55,6 +57,25 @@ test("a long domestic hop uses the nearest airports", () => {
   assert.deepEqual(plan.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
   assert.equal(plan.legs[1].from.name, "甘迺迪機場");
   assert.equal(plan.legs[1].to.name, "洛杉磯機場");
+});
+
+test("leg changes read as a transfer at the hub", () => {
+  const plan = planCourier({ from: place("taipei"), to: place("tokyo") });
+  assert.equal(transferBeat(null, plan.legs[0]), null);
+  const toPlane = transferBeat(plan.legs[0], plan.legs[1]);
+  assert.equal(toPlane.hub, "桃園機場");
+  assert.equal(toPlane.line, "正在桃園機場轉運，改搭飛機");
+  assert.equal(toPlane.mode, "plane");
+  const toRoad = transferBeat(plan.legs[1], plan.legs[2]);
+  assert.equal(toRoad.line, "正在羽田機場轉運，改走公路");
+  assert.match(legProgressLine(plan.legs[0], { index: 0, count: 3 }), /公路上，送往桃園機場/);
+  assert.match(legProgressLine(plan.legs[1], { index: 1, count: 3 }), /飛機上，前往羽田機場/);
+  assert.match(legProgressLine(plan.legs[2], { index: 2, count: 3 }), /最後一段公路，送往東京/);
+
+  const train = planCourier({ from: place("taipei"), to: place("kaohsiung") });
+  assert.equal(legProgressLine(train.legs[0], { index: 0, count: 1 }), "火車上，前往高雄");
+  const local = planCourier({ from: place("taipei"), to: place("taipei101") });
+  assert.equal(legProgressLine(local.legs[0], { index: 0, count: 1 }), "公路上，前往台北101");
 });
 
 test("the courier changes mode in time order and does not teleport", () => {

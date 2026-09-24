@@ -51,6 +51,12 @@ async function send(url, options = {}) {
   return { status: res.status, body, headers: res.headers };
 }
 
+test("health check is public", async () => {
+  const health = await send(`${base}/api/health`);
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+});
+
 test("places and presets are available", async () => {
   const places = await send(`${base}/api/places`);
   const presets = await send(`${base}/api/presets`);

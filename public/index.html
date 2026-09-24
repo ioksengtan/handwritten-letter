@@ -122,6 +122,15 @@
             <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
+        <div id="transfer-banner" class="transfer-banner" role="status" aria-live="polite" hidden>
+          <div class="transfer-card">
+            <div id="transfer-icon" class="transfer-icon"></div>
+            <div>
+              <p id="transfer-kicker" class="transfer-kicker"></p>
+              <p id="transfer-title" class="transfer-title"></p>
+            </div>
+          </div>
+        </div>
         <div class="sheet" id="flight-sheet">
           <p class="travel-count" id="flight-travel"></p>
           <p class="route" id="flight-route"></p>
@@ -130,7 +139,7 @@
           <p class="remain" id="flight-remain"></p>
           <div class="leg-legend" id="flight-legend"></div>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
-          <button type="button" class="btn primary" id="btn-open" hidden>打開信</button>
+          <button type="button" class="btn primary" id="btn-open" hidden>拆信</button>
         </div>
       </section>
 
@@ -144,12 +153,43 @@
           <h1>來信</h1>
         </header>
         <div class="read-body">
-          <figure class="letter-card">
-            <img id="read-image" alt="" />
-          </figure>
-          <p class="caption" id="read-caption"></p>
+          <div id="ceremony" class="ceremony">
+            <div class="ceremony-stack">
+              <figure class="letter-card ceremony-letter">
+                <img id="read-image" alt="" />
+              </figure>
+              <div class="envelope" aria-hidden="true">
+                <div class="envelope-body"></div>
+                <div class="envelope-flap"></div>
+                <div class="seal"></div>
+                <div class="postmark">
+                  <span>在路上</span>
+                  <b id="postmark-place"></b>
+                  <small id="postmark-time"></small>
+                </div>
+              </div>
+              <button type="button" id="ceremony-skip" class="ceremony-hit" aria-label="拆開這封信"></button>
+            </div>
+            <p class="caption" id="read-caption"></p>
+            <div class="aftertaste" id="read-after"></div>
+          </div>
         </div>
       </section>
+      <div id="throw-stage" class="throw-stage" hidden>
+        <p class="throw-kicker">在路上</p>
+        <p class="throw-caption">扔出去了</p>
+        <div class="throw-letter-slot">
+          <div class="throw-letter-wrap">
+            <img id="throw-letter" alt="" />
+          </div>
+        </div>
+        <div class="throw-plane" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="92" height="92">
+            <path d="M32 6 L56 52 L32 42 L8 52 Z" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M32 16 L32 42" stroke="#1d2a3a" stroke-width="1.1" opacity="0.35"/>
+          </svg>
+        </div>
+      </div>
     </div>
     <script src="/vendor/leaflet/leaflet.js"></script>
     <script type="module" src="/app.js"></script>
