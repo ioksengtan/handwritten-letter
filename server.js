@@ -314,7 +314,7 @@ export function createApp({
     const existing = readLetter(req.params.id, nowMs);
     if (!existing) return res.status(404).json({ error: "找不到這封信" });
     if (existing.status !== "draft") {
-      return res.status(409).json({ error: "這封信已經扔出" });
+      return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
     const geo = buildGeometry(
@@ -347,7 +347,7 @@ export function createApp({
     const existing = readLetter(req.params.id, nowMs);
     if (!existing) return res.status(404).json({ error: "找不到這封信" });
     if (existing.status !== "draft") {
-      return res.status(409).json({ error: "這封信已經扔出" });
+      return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
     const geo = buildGeometry(

@@ -14,8 +14,7 @@ const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
 const PLANE_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
-  <path d="M32 6 L56 52 L32 42 L8 52 Z" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7" stroke-linejoin="round"/>
-  <path d="M32 16 L32 42" stroke="#1d2a3a" stroke-width="1.1" opacity="0.35"/>
+  <path d="M32 3 C34.2 3 36 8 36 14 L36 26 L58 34 L58 39 L36 35 L36 48 L46 56 L46 60 L32 55 L18 60 L18 56 L28 48 L28 35 L6 39 L6 34 L28 26 L28 14 C28 8 29.8 3 32 3 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
 </svg>`;
 const TRUCK_SVG = `
 <svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
@@ -55,8 +54,8 @@ const state = {
   poll: 0,
   flight: null,
   submitting: false,
-  throwLetterId: null,
-  throwTimers: [],
+  postLetterId: null,
+  postTimers: [],
   ceremonyTimer: 0,
   ceremonySkip: false,
 };
@@ -200,54 +199,54 @@ function stopLoops() {
   state.flight = null;
 }
 
-function cancelThrow() {
-  for (const id of state.throwTimers) clearTimeout(id);
-  state.throwTimers = [];
-  state.throwLetterId = null;
-  const stage = $("throw-stage");
+function cancelPost() {
+  for (const id of state.postTimers) clearTimeout(id);
+  state.postTimers = [];
+  state.postLetterId = null;
+  const stage = $("post-stage");
   if (!stage) return;
   stage.hidden = true;
   stage.classList.remove("is-playing", "is-fading");
-  $("throw-letter").removeAttribute("src");
+  $("post-letter").removeAttribute("src");
 }
 
-function finishThrow() {
-  state.throwTimers = [];
-  state.throwLetterId = null;
-  const stage = $("throw-stage");
+function finishPost() {
+  state.postTimers = [];
+  state.postLetterId = null;
+  const stage = $("post-stage");
   stage.hidden = true;
   stage.classList.remove("is-playing", "is-fading");
-  $("throw-letter").removeAttribute("src");
+  $("post-letter").removeAttribute("src");
 }
 
-function playThrow(letterId, imageUrl) {
+function playPost(letterId, imageUrl) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) {
     navigate(`#/flight/${letterId}`);
     return;
   }
-  state.throwLetterId = letterId;
-  const stage = $("throw-stage");
-  const img = $("throw-letter");
+  state.postLetterId = letterId;
+  const stage = $("post-stage");
+  const img = $("post-letter");
   img.alt = "";
   img.src = imageUrl;
   stage.hidden = false;
   stage.classList.remove("is-playing", "is-fading");
   void stage.offsetWidth;
   stage.classList.add("is-playing");
-  state.throwTimers = [
+  state.postTimers = [
     setTimeout(() => {
-      if (state.throwLetterId !== letterId) return;
+      if (state.postLetterId !== letterId) return;
       navigate(`#/flight/${letterId}?intro=1`);
-    }, 640),
+    }, 1450),
     setTimeout(() => {
-      if (state.throwLetterId !== letterId) return;
+      if (state.postLetterId !== letterId) return;
       stage.classList.add("is-fading");
-    }, 1480),
+    }, 2050),
     setTimeout(() => {
-      if (state.throwLetterId !== letterId) return;
-      finishThrow();
-    }, 2140),
+      if (state.postLetterId !== letterId) return;
+      finishPost();
+    }, 2700),
   ];
 }
 
@@ -261,7 +260,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!letters.length) {
-    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試飛。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試寄。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -659,7 +658,7 @@ async function submitLetter(launch) {
     return;
   }
   state.submitting = true;
-  $("btn-throw").disabled = true;
+  $("btn-send").disabled = true;
   $("btn-save").disabled = true;
   try {
     const body = {
@@ -686,13 +685,13 @@ async function submitLetter(launch) {
         body: JSON.stringify(body),
       });
     }
-    if (launch) playThrow(letter.id, body.imageDataUrl);
+    if (launch) playPost(letter.id, body.imageDataUrl);
     else navigate("#/");
   } catch (err) {
     showToast(err.message);
   } finally {
     state.submitting = false;
-    $("btn-throw").disabled = false;
+    $("btn-send").disabled = false;
     $("btn-save").disabled = false;
   }
 }
@@ -733,10 +732,9 @@ function addTiles(map) {
   map.getPane("plane").style.zIndex = 640;
   map.createPane("traffic");
   map.getPane("traffic").style.zIndex = 450;
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    attribution: "&copy; OpenStreetMap &copy; CARTO",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
 }
 
@@ -1362,8 +1360,8 @@ async function redrawRecipient() {
 async function render() {
   const token = ++renderToken;
   const { parts, params } = parseHash();
-  const keepThrow = state.throwLetterId && parts[0] === "flight" && parts[1] === state.throwLetterId;
-  if (!keepThrow) cancelThrow();
+  const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
+  if (!keepPost) cancelPost();
   stopLoops();
   try {
     if (parts[0] === "compose") {
@@ -1417,7 +1415,7 @@ function boot() {
     state.ceremonySkip = true;
     settleCeremony();
   });
-  $("btn-throw").addEventListener("click", () => submitLetter(true));
+  $("btn-send").addEventListener("click", () => submitLetter(true));
   $("btn-save").addEventListener("click", () => submitLetter(false));
   $("btn-undo").addEventListener("click", undoStroke);
   $("btn-clear").addEventListener("click", clearCanvas);

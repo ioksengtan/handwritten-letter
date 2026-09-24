@@ -7,7 +7,7 @@
     <title>在路上</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 7.5 L14 2.5 L9 14 L7.5 8.5 Z' fill='%23243e68'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1.2' y='3' width='13.6' height='10' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3Cpath d='M1.2 3.4 L8 9 L14.8 3.4' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/styles.css" />
@@ -86,7 +86,7 @@
         </div>
         <div class="dock dock-split">
           <button type="button" class="btn" id="btn-save">儲存草稿</button>
-          <button type="button" class="btn primary" id="btn-throw">扔出</button>
+          <button type="button" class="btn primary" id="btn-send">寄出</button>
         </div>
       </section>
 
@@ -173,20 +173,17 @@
           </div>
         </div>
       </section>
-      <div id="throw-stage" class="throw-stage" hidden>
-        <p class="throw-stamp"><span>在路上</span>扔出去了</p>
-        <div class="throw-letter-slot">
-          <div class="throw-letter-wrap">
-            <img id="throw-letter" alt="" />
-            <span class="throw-crease" aria-hidden="true"></span>
+      <div id="post-stage" class="post-stage" hidden>
+        <div class="post-letter-slot">
+          <div class="post-letter-wrap">
+            <img id="post-letter" alt="" />
+            <p class="post-stamp" aria-hidden="true"><span>在路上</span>已寄出</p>
           </div>
         </div>
-        <div class="throw-plane" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="96" height="96">
-            <path d="M31 9 L53 49 L32 40 L11 51 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
-            <path d="M31 16 L32 40" stroke="#3c342c" stroke-width="0.8" opacity="0.45"/>
-            <path d="M20 36 L45 33" stroke="#8a5a38" stroke-width="0.7" opacity="0.55"/>
-          </svg>
+        <div class="postbox" aria-hidden="true">
+          <div class="postbox-cap"></div>
+          <div class="postbox-slot"></div>
+          <span class="postbox-mark">郵</span>
         </div>
       </div>
     </div>

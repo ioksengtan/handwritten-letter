@@ -815,136 +815,144 @@ button:focus-visible {
   60% { transform: rotate(5deg); }
 }
 
-.throw-stage {
+.post-stage {
   position: absolute;
   inset: 0;
   z-index: 30;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
   background-color: #e7dcc8;
   background-image:
     var(--paper-grain),
     linear-gradient(180deg, #efe4d2 0%, #e4d3bc 100%);
 }
 
-.throw-stage.is-fading {
+.post-stage.is-fading {
   pointer-events: none;
   animation: stage-fade 0.55s ease forwards;
 }
 
-.throw-stamp {
-  position: relative;
-  margin: calc(36px + env(safe-area-inset-top)) 0 0;
-  width: 118px;
-  height: 118px;
-  border: 2px solid rgba(122, 52, 46, 0.8);
-  border-radius: 50%;
-  color: #7a342e;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  font-size: 16px;
-  letter-spacing: 0.12em;
-  transform: rotate(-8deg);
-  opacity: 0;
-  background: rgba(243, 234, 220, 0.35);
-}
-
-.throw-stamp span {
-  font-size: 11px;
-  letter-spacing: 0.22em;
-}
-
-.throw-stamp::after {
-  content: "";
-  position: absolute;
-  inset: 3px -2px -1px 4px;
-  border: 1px dashed rgba(122, 52, 46, 0.35);
-  border-radius: 50%;
-  transform: rotate(5deg);
-}
-
-.throw-stage.is-playing .throw-stamp {
-  animation: stamp-in 1.6s ease forwards;
-}
-
-.throw-letter-slot {
+.post-letter-slot {
   position: absolute;
   left: 50%;
-  top: 50%;
-  width: min(68%, 260px);
-  transform: translate(-50%, -46%);
+  top: 8%;
+  width: min(62%, 240px);
+  z-index: 2;
+  transform: translateX(-50%);
 }
 
-.throw-letter-wrap {
+.post-letter-wrap {
   position: relative;
 }
 
-.throw-letter-wrap img {
+.post-letter-wrap img {
   width: 100%;
   display: block;
   background: #f7f1e6;
   box-shadow: 0 1px 0 rgba(255, 250, 240, 0.7) inset, 0 14px 22px rgba(70, 46, 24, 0.16);
 }
 
-.throw-crease {
+.post-stamp {
   position: absolute;
-  inset: 0;
-  background: linear-gradient(118deg, transparent 42%, rgba(90, 60, 30, 0.22) 49%, transparent 56%);
+  right: 8%;
+  top: 16%;
+  width: 86px;
+  height: 86px;
+  margin: 0;
+  border: 2px solid rgba(122, 52, 46, 0.82);
+  border-radius: 50%;
+  color: #7a342e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  background: rgba(243, 234, 220, 0.28);
   opacity: 0;
   pointer-events: none;
 }
 
-.throw-stage.is-playing .throw-letter-wrap {
-  animation: lift-fold 1.05s cubic-bezier(0.3, 0.05, 0.2, 1) forwards;
+.post-stamp span {
+  font-size: 10px;
+  letter-spacing: 0.18em;
 }
 
-.throw-stage.is-playing .throw-crease {
-  animation: crease-in 1.05s linear forwards;
-}
-
-.throw-plane {
+.post-stamp::after {
+  content: "";
   position: absolute;
+  inset: 4px;
+  border: 1px dashed rgba(122, 52, 46, 0.42);
+  border-radius: 50%;
+  transform: rotate(6deg);
+}
+
+.post-stage.is-playing .post-stamp {
+  animation: stamp-press 0.72s cubic-bezier(0.2, 0.65, 0.2, 1) forwards;
+}
+
+.post-stage.is-playing .post-letter-slot {
+  animation: drop-in-box 0.95s 1.12s cubic-bezier(0.42, 0.04, 0.72, 1) forwards;
+}
+
+.postbox {
+  position: absolute;
+  z-index: 4;
   left: 50%;
-  top: 50%;
-  width: 96px;
-  height: 96px;
-  margin: -24px 0 0 -48px;
-  opacity: 0;
-  filter: drop-shadow(2px 3px 0 rgba(70, 46, 24, 0.16));
+  bottom: 5%;
+  width: 176px;
+  height: 188px;
+  transform: translateX(-50%);
+  background-color: #7a342e;
+  background-image: var(--paper-grain);
+  border-radius: 4px 4px 3px 3px;
+  box-shadow: 0 8px 0 #5c241f, 0 16px 22px rgba(60, 30, 20, 0.18);
 }
 
-.throw-stage.is-playing .throw-plane {
-  animation: plane-leave 1.25s 0.62s cubic-bezier(0.22, 0.12, 0.2, 1) forwards;
+.postbox-cap {
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: -10px;
+  height: 22px;
+  background: #6e342e;
+  border-radius: 3px 3px 0 0;
+  box-shadow: 0 1px 0 rgba(255, 230, 210, 0.18) inset;
 }
 
-@keyframes lift-fold {
-  0% { transform: translateY(18px) rotate(-2deg); opacity: 1; }
-  28% { transform: translateY(0) rotate(-0.6deg); opacity: 1; }
-  100% { transform: translateY(-8px) rotate(4deg) scale(0.62); opacity: 0; }
+.postbox-slot {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  top: 28px;
+  height: 16px;
+  background: #241412;
+  border-radius: 2px;
+  box-shadow: 0 2px 0 rgba(255, 226, 196, 0.16) inset;
 }
 
-@keyframes crease-in {
-  0%, 25% { opacity: 0; }
-  50% { opacity: 1; }
-  100% { opacity: 0; }
+.postbox-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 42px;
+  text-align: center;
+  color: #f3eadc;
+  font-size: 32px;
+  letter-spacing: 0.24em;
 }
 
-@keyframes plane-leave {
-  0% { opacity: 0; transform: translate(0, 18px) rotate(-18deg) scale(0.55); }
-  16% { opacity: 1; transform: translate(4px, -6px) rotate(-8deg) scale(1); }
-  100% { opacity: 0; transform: translate(64px, -250px) rotate(16deg) scale(0.72); }
+@keyframes stamp-press {
+  0% { opacity: 0; transform: translateY(-34px) rotate(-16deg) scale(1.16); }
+  58% { opacity: 0.94; transform: translateY(2px) rotate(-8deg) scale(0.98); }
+  100% { opacity: 0.9; transform: translateY(0) rotate(-7deg) scale(1); }
 }
 
-@keyframes stamp-in {
-  0% { opacity: 0; transform: rotate(-14deg) scale(1.08); }
-  18% { opacity: 0.9; transform: rotate(-7deg) scale(1); }
-  70% { opacity: 0.9; transform: rotate(-8deg); }
-  100% { opacity: 0; transform: rotate(-8deg); }
+@keyframes drop-in-box {
+  0% { transform: translateX(-50%) translateY(0) rotate(-1deg) scale(1); opacity: 1; }
+  58% { transform: translateX(-50%) translateY(34vh) rotate(1.6deg) scale(0.78); opacity: 1; }
+  84% { transform: translateX(-50%) translateY(50vh) rotate(2.4deg) scale(0.42); opacity: 1; }
+  100% { transform: translateX(-50%) translateY(56vh) rotate(3deg) scale(0.26); opacity: 0; }
 }
 
 @keyframes stage-fade {
@@ -1166,10 +1174,9 @@ button:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .throw-stage,
-  .throw-stamp,
-  .throw-letter-wrap,
-  .throw-plane,
+  .post-stage,
+  .post-stamp,
+  .post-letter-slot,
   .transfer-card,
   .envelope,
   .envelope-flap,
