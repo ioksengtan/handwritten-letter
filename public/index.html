@@ -124,11 +124,9 @@
         </button>
         <div id="transfer-banner" class="transfer-banner" role="status" aria-live="polite" hidden>
           <div class="transfer-card">
-            <div id="transfer-icon" class="transfer-icon"></div>
-            <div>
-              <p id="transfer-kicker" class="transfer-kicker"></p>
-              <p id="transfer-title" class="transfer-title"></p>
-            </div>
+            <p id="transfer-kicker" class="transfer-kicker"></p>
+            <p id="transfer-title" class="transfer-title"></p>
+            <span id="transfer-mark" class="transfer-mark"></span>
           </div>
         </div>
         <div class="sheet" id="flight-sheet">
@@ -176,17 +174,18 @@
         </div>
       </section>
       <div id="throw-stage" class="throw-stage" hidden>
-        <p class="throw-kicker">在路上</p>
-        <p class="throw-caption">扔出去了</p>
+        <p class="throw-stamp"><span>在路上</span>扔出去了</p>
         <div class="throw-letter-slot">
           <div class="throw-letter-wrap">
             <img id="throw-letter" alt="" />
+            <span class="throw-crease" aria-hidden="true"></span>
           </div>
         </div>
         <div class="throw-plane" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="92" height="92">
-            <path d="M32 6 L56 52 L32 42 L8 52 Z" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7" stroke-linejoin="round"/>
-            <path d="M32 16 L32 42" stroke="#1d2a3a" stroke-width="1.1" opacity="0.35"/>
+          <svg viewBox="0 0 64 64" width="96" height="96">
+            <path d="M31 9 L53 49 L32 40 L11 51 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
+            <path d="M31 16 L32 40" stroke="#3c342c" stroke-width="0.8" opacity="0.45"/>
+            <path d="M20 36 L45 33" stroke="#8a5a38" stroke-width="0.7" opacity="0.55"/>
           </svg>
         </div>
       </div>

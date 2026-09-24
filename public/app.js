@@ -969,9 +969,8 @@ function renderFlightHud(letter, progress, etaSeconds, loc) {
   } else {
     const index = loc ? loc.legIndex : (letter.legIndex ?? 0);
     const leg = legs[index] || legs[0];
-    const mode = loc?.mode || leg?.mode || letter.mode;
     setText("flight-mode", legProgressLine(leg, { index, count: legs.length }));
-    $("flight-mode").style.color = MODE_COLOR[mode] || "";
+    $("flight-mode").style.color = "";
     renderLegend("flight-legend", legs, index);
     const secs = Math.ceil(etaSeconds);
     setText("flight-eta", secs <= 1 ? "即將抵達" : `${formatDuration(secs)}後抵達`);
@@ -1113,9 +1112,7 @@ function presentTransfer(beat, hubPoint) {
   const banner = $("transfer-banner");
   $("transfer-kicker").textContent = beat.hub;
   $("transfer-title").textContent = beat.title;
-  const icon = $("transfer-icon");
-  icon.innerHTML = MODE_SVG[beat.mode] || "";
-  icon.style.background = MODE_COLOR[beat.mode] || "";
+  $("transfer-mark").textContent = MODE_LABEL[beat.mode] || "";
   banner.hidden = false;
   banner.classList.remove("is-on");
   void banner.offsetWidth;
