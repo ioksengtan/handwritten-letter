@@ -107,6 +107,11 @@ test("launch schedules a flight the client can resume by time", async () => {
   assert.equal(created.status, 201);
   assert.equal(created.body.status, "in_flight");
   assert.equal(created.body.durationSeconds, expected);
+  for (const key of ["createdAt", "departedAt", "arrivesAt", "serverNow"]) {
+    assert.match(created.body[key], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  }
+  assert.equal(JSON.stringify(created.body).includes("上午"), false);
+  assert.equal(JSON.stringify(created.body).includes("下午"), false);
   assert.ok(created.body.progress < 0.001);
   assert.equal(created.body.imageUrl, null);
   assert.ok(Math.abs(created.body.position.lat - from.lat) < 0.01);
@@ -129,6 +134,7 @@ test("launch schedules a flight the client can resume by time", async () => {
   assert.equal(done.body.status, "delivered");
   assert.equal(done.body.progress, 1);
   assert.ok(done.body.imageUrl);
+  assert.match(done.body.deliveredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
   const image = await fetch(done.body.imageUrl.startsWith("http") ? done.body.imageUrl : `${base}${done.body.imageUrl}`);
   assert.equal(image.status, 200);

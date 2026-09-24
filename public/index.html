@@ -9,6 +9,9 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1.2' y='3' width='13.6' height='10' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3Cpath d='M1.2 3.4 L8 9 L14.8 3.4' fill='none' stroke='%236e342e' stroke-width='1.3'/%3E%3C/svg%3E"
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -23,7 +26,7 @@
           </header>
           <div class="activity">
             <p id="travel-count"></p>
-            <div id="home-map"></div>
+            <div id="home-map" class="aged-map"></div>
           </div>
           <div id="home-letters"></div>
           <section class="block">
@@ -91,7 +94,7 @@
       </section>
 
       <section id="view-draw" class="view view-flight view-draw" hidden>
-        <div id="draw-map"></div>
+        <div id="draw-map" class="aged-map"></div>
         <button type="button" class="icon-btn float-back" id="draw-back" aria-label="返回">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -116,7 +119,7 @@
       </section>
 
       <section id="view-flight" class="view view-flight" hidden>
-        <div id="map"></div>
+        <div id="map" class="aged-map"></div>
         <button type="button" class="icon-btn float-back" id="flight-back" aria-label="返回">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -187,6 +190,14 @@
         </div>
       </div>
     </div>
+    <svg class="ink-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="ink-bleed" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="1" seed="4" result="noise" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.7" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </defs>
+    </svg>
     <script src="/vendor/leaflet/leaflet.js"></script>
     <script type="module" src="/app.js"></script>
   </body>

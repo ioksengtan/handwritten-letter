@@ -26,9 +26,9 @@ export const MODE_LABEL = {
 };
 
 export const MODE_COLOR = {
-  road: "#c47b3a",
-  train: "#2f7d5a",
-  plane: "#3d6cb5",
+  road: "#6a3b28",
+  train: "#3d4a34",
+  plane: "#1c3356",
 };
 
 export const HUBS = [
