@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "./lib/store.js";
 import { describeFlight, flightDurationSeconds, haversineKm } from "./shared/flight.js";
 import { PLACES, PRESETS, findPlace } from "./shared/places.js";
+import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const MIN_DISTANCE_KM = 0.05;
@@ -29,15 +30,33 @@ function parseDataUrl(dataUrl) {
   return { mime, buffer, ext };
 }
 
-function pointFromId(id) {
+function senderFromId(id) {
+  const city = findCity(id);
+  if (city) return { id: city.id, name: city.name, lat: city.lat, lng: city.lng };
   const place = findPlace(id);
   if (!place) return null;
   return { id: place.id, name: place.name, lat: place.lat, lng: place.lng };
 }
 
+function destinationFromId(id) {
+  const recipient = findRecipient(id);
+  if (recipient) {
+    return {
+      id: recipient.id,
+      name: recipient.name,
+      city: recipient.city,
+      cityId: recipient.cityId,
+      country: recipient.country,
+      lat: recipient.lat,
+      lng: recipient.lng,
+    };
+  }
+  return senderFromId(id);
+}
+
 function buildGeometry(fromId, toId, pace) {
-  const from = pointFromId(fromId);
-  const to = pointFromId(toId);
+  const from = senderFromId(fromId);
+  const to = destinationFromId(toId);
   if (!from || !to) return { error: "找不到地點" };
   if (from.id === to.id) return { error: "請選擇不同的寄出地與收件地" };
   const distanceKm = round(haversineKm(from.lat, from.lng, to.lat, to.lng), 3);
@@ -85,7 +104,11 @@ function toPublic(letter, nowMs) {
   };
 }
 
-export function createApp({ dataDir = path.join(root, "data"), now = () => Date.now() } = {}) {
+export function createApp({
+  dataDir = path.join(root, "data"),
+  now = () => Date.now(),
+  random = Math.random,
+} = {}) {
   const store = createStore(dataDir);
   const app = express();
   app.disable("x-powered-by");
@@ -120,12 +143,56 @@ export function createApp({ dataDir = path.join(root, "data"), now = () => Date.
     return store.get(id);
   }
 
+  function recentRecipientIds(limit = 1) {
+    const ids = [];
+    for (const letter of store.list()) {
+      if (!findRecipient(letter.to?.id)) continue;
+      ids.push(letter.to.id);
+      if (ids.length >= limit) break;
+    }
+    return ids;
+  }
+
+  function toRoute(geo) {
+    return {
+      from: geo.from,
+      to: geo.to,
+      distanceKm: geo.distanceKm,
+      durationSeconds: geo.durationSeconds,
+      pace: geo.pace,
+    };
+  }
+
   app.get("/api/places", (req, res) => {
     res.json(PLACES);
   });
 
   app.get("/api/presets", (req, res) => {
     res.json(PRESETS);
+  });
+
+  app.get("/api/recipients", (req, res) => {
+    res.json(RECIPIENTS);
+  });
+
+  app.get("/api/route", (req, res) => {
+    const geo = buildGeometry(req.query.fromId, req.query.toId, req.query.pace || "playable-fast");
+    if (geo.error) return res.status(400).json({ error: geo.error });
+    res.json(toRoute(geo));
+  });
+
+  app.post("/api/recipients/draw", (req, res) => {
+    const body = req.body || {};
+    const from = senderFromId(body.fromId || "taipei");
+    if (!from) return res.status(400).json({ error: "找不到寄出地" });
+    const recipient = pickRecipient({
+      from,
+      excludeIds: [body.excludeId, ...recentRecipientIds(1)],
+      random,
+    });
+    const geo = buildGeometry(from.id, recipient.id, body.pace || "playable-fast");
+    if (geo.error) return res.status(400).json({ error: geo.error });
+    res.json(toRoute(geo));
   });
 
   app.get("/api/letters", (req, res) => {

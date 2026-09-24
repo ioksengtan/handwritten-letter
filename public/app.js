@@ -1,10 +1,14 @@
 import {
+  alignLongitude,
   bearingDegrees,
   flightDurationSeconds,
   haversineKm,
   interpolate,
+  samplePath,
+  unwrapLongitudes,
 } from "/shared/flight.js";
 import { PLACES, findPlace, findPreset } from "/shared/places.js";
+import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
@@ -18,6 +22,8 @@ const state = {
   view: "home",
   fromId: "taipei",
   toId: "kaohsiung",
+  recipient: null,
+  mode: "preset",
   pace: "playable-fast",
   draftId: null,
   ctx: null,
@@ -54,7 +60,7 @@ function formatDuration(seconds) {
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
   if (hours > 0) return minutes > 0 ? `${hours} 小時 ${minutes} 分` : `${hours} 小時`;
-  if (minutes > 0) return secs > 0 ? `${minutes} 分 ${secs} 秒` : `${minutes} 分`;
+  if (minutes > 0) return secs > 0 ? `${minutes} 分 ${secs} 秒` : `${minutes} 分鐘`;
   return `${secs} 秒`;
 }
 
@@ -121,9 +127,31 @@ function navigate(hash) {
 
 function showOnly(name) {
   state.view = name;
-  for (const id of ["home", "compose", "flight", "read"]) {
+  for (const id of ["home", "compose", "draw", "flight", "read"]) {
     $(`view-${id}`).hidden = id !== name;
   }
+}
+
+function whereLine(point) {
+  if (!point) return "";
+  if (point.country && point.country !== point.city && point.city) {
+    return `${point.city} · ${point.country}`;
+  }
+  return point.city || point.name;
+}
+
+function routeLine(from, to) {
+  if (to.city && to.name !== to.city) return `${from.name} → ${to.name} · ${to.city}`;
+  return `${from.name} → ${to.name}`;
+}
+
+function pinLabel(point) {
+  if (point.city && point.name !== point.city) return `${point.name} · ${point.city}`;
+  return point.name;
+}
+
+function senderById(id) {
+  return findCity(id) || findPlace(id);
 }
 
 function stopLoops() {
@@ -148,7 +176,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!letters.length) {
-    root.innerHTML = `<p class="empty">還沒有信。挑一條示範路線，或自己寫一封。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試飛。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -158,7 +186,7 @@ function renderHomeList(letters) {
       items = items.slice().sort((a, b) => a.etaSeconds - b.etaSeconds);
     }
     const cards = items.map((letter) => {
-      const route = `${esc(letter.from.name)} → ${esc(letter.to.name)}`;
+      const route = esc(routeLine(letter.from, letter.to));
       let detail = "草稿";
       let extra = "";
       if (letter.status === "in_flight") {
@@ -220,6 +248,42 @@ function buildPlaceChips() {
       root.append(button);
     }
   }
+  for (const containerId of ["sender-chips", "draw-senders"]) {
+    const root = $(containerId);
+    for (const city of CITIES) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip";
+      button.dataset.id = city.id;
+      button.textContent = city.name;
+      button.addEventListener("click", () => {
+        if (containerId === "draw-senders") changeDrawSender(city.id);
+        else selectSender(city.id);
+      });
+      root.append(button);
+    }
+  }
+}
+
+function paintSenderChips() {
+  for (const containerId of ["sender-chips", "draw-senders"]) {
+    const root = $(containerId);
+    for (const button of root.querySelectorAll("button")) {
+      const selected = button.dataset.id === state.fromId;
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      if (selected) button.scrollIntoView({ inline: "center", block: "nearest" });
+    }
+  }
+}
+
+function selectSender(id) {
+  state.fromId = id;
+  paintSenderChips();
+  updateEstimate();
+  if (state.mode === "recipient" && state.recipient) {
+    const next = `#/compose?from=${encodeURIComponent(id)}&to=${encodeURIComponent(state.recipient.id)}`;
+    if (location.hash !== next) history.replaceState(null, "", next);
+  }
 }
 
 function paintChips() {
@@ -238,11 +302,23 @@ function selectPlace(which, id) {
   updateEstimate();
 }
 
+function currentEndpoints() {
+  const from = senderById(state.fromId);
+  const to = state.recipient || findPlace(state.toId);
+  return { from, to };
+}
+
+function sameEndpoint(from, to) {
+  if (!from || !to) return true;
+  if (state.recipient && (state.recipient.cityId === from.id)) return true;
+  if (!state.recipient && from.id === to.id) return true;
+  return haversineKm(from.lat, from.lng, to.lat, to.lng) < 0.05;
+}
+
 function updateEstimate() {
   const box = $("estimate");
-  const from = findPlace(state.fromId);
-  const to = findPlace(state.toId);
-  if (!from || !to || from.id === to.id) {
+  const { from, to } = currentEndpoints();
+  if (sameEndpoint(from, to)) {
     box.className = "estimate warn";
     box.textContent = "請選擇不同的寄出地與收件地";
     return;
@@ -251,6 +327,21 @@ function updateEstimate() {
   const seconds = flightDurationSeconds(km, state.pace);
   box.className = "estimate";
   box.innerHTML = `<strong>${esc(formatDistance(km))}</strong><span>約 ${esc(formatDuration(seconds))}</span>`;
+}
+
+function applyComposeMode() {
+  const recipientMode = state.mode === "recipient" && state.recipient;
+  $("recipient-banner").hidden = !recipientMode;
+  $("sender-panel").hidden = !recipientMode;
+  $("from-panel").hidden = Boolean(recipientMode);
+  $("to-panel").hidden = Boolean(recipientMode);
+  if (recipientMode) {
+    $("recipient-name").textContent = state.recipient.name;
+    $("recipient-where").textContent = whereLine(state.recipient);
+    paintSenderChips();
+  }
+  paintChips();
+  updateEstimate();
 }
 
 function setPace(pace) {
@@ -409,9 +500,17 @@ async function openCompose(params, token) {
   showOnly("compose");
   setupCanvas();
   state.draftId = null;
+  state.recipient = null;
+  state.mode = "preset";
   state.pace = "playable-fast";
   const preset = findPreset(params.get("preset") || "");
-  if (preset) {
+  const recipient = findRecipient(params.get("to") || "");
+  if (recipient) {
+    state.mode = "recipient";
+    state.recipient = recipient;
+    state.toId = recipient.id;
+    state.fromId = params.get("from") || "taipei";
+  } else if (preset) {
     state.fromId = preset.from;
     state.toId = preset.to;
   } else if (!params.get("draft")) {
@@ -431,20 +530,27 @@ async function openCompose(params, token) {
     state.fromId = letter.from.id;
     state.toId = letter.to.id;
     state.pace = letter.pace || "playable-fast";
+    const drafted = findRecipient(letter.to.id);
+    if (drafted) {
+      state.mode = "recipient";
+      state.recipient = drafted;
+    } else {
+      state.mode = "preset";
+      state.recipient = null;
+    }
     if (letter.imageUrl) {
       const img = await loadImage(letter.imageUrl);
       paintContained(img);
     }
   }
-  paintChips();
+  applyComposeMode();
   setPace(state.pace);
 }
 
 async function submitLetter(launch) {
   if (state.submitting) return;
-  const from = findPlace(state.fromId);
-  const to = findPlace(state.toId);
-  if (!from || !to || from.id === to.id) {
+  const { from, to } = currentEndpoints();
+  if (sameEndpoint(from, to)) {
     showToast("請選擇不同的寄出地與收件地");
     return;
   }
@@ -458,7 +564,7 @@ async function submitLetter(launch) {
   try {
     const body = {
       fromId: from.id,
-      toId: to.id,
+      toId: state.recipient ? state.recipient.id : to.id,
       pace: state.pace,
       imageDataUrl: $("letter-canvas").toDataURL("image/jpeg", 0.86),
       launch,
@@ -495,15 +601,12 @@ function setText(id, value) {
   if (el.textContent !== value) el.textContent = value;
 }
 
-function mountFlight(letter) {
-  const path = [];
-  const steps = 72;
-  for (let i = 0; i <= steps; i += 1) {
-    path.push(interpolate(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng, i / steps));
-  }
-  const map = L.map($("map"), {
+function mountRouteMap(container, from, to, { showPlane = false, padBottom = 196 } = {}) {
+  const path = unwrapLongitudes(samplePath(from, to, 80));
+  const map = L.map(container, {
     zoomControl: true,
     attributionControl: true,
+    worldCopyJump: true,
   });
   map.createPane("plane");
   map.getPane("plane").style.zIndex = 640;
@@ -533,55 +636,72 @@ function mountFlight(letter) {
     iconSize: [12, 12],
     iconAnchor: [6, 6],
   });
-  L.marker([letter.from.lat, letter.from.lng], { icon: dot("origin"), interactive: false })
-    .bindTooltip(letter.from.name, { permanent: true, direction: "left", className: "city-label", offset: [-8, 0] })
+  const origin = path[0];
+  const dest = path[path.length - 1];
+  L.marker([origin.lat, origin.lng], { icon: dot("origin"), interactive: false })
+    .bindTooltip(pinLabel(from), { permanent: true, direction: "left", className: "city-label", offset: [-8, 0] })
     .addTo(map);
-  L.marker([letter.to.lat, letter.to.lng], { icon: dot("dest"), interactive: false })
-    .bindTooltip(letter.to.name, { permanent: true, direction: "right", className: "city-label", offset: [8, 0] })
+  L.marker([dest.lat, dest.lng], { icon: dot("dest"), interactive: false })
+    .bindTooltip(pinLabel(to), { permanent: true, direction: "right", className: "city-label", offset: [8, 0] })
     .addTo(map);
 
-  const plane = L.marker([letter.from.lat, letter.from.lng], {
-    icon: L.divIcon({
-      className: "plane-wrap",
-      html: `<div class="plane-rot">${PLANE_SVG}</div>`,
-      iconSize: [42, 42],
-      iconAnchor: [21, 21],
-    }),
-    pane: "plane",
-    interactive: false,
-    zIndexOffset: 800,
-  }).addTo(map);
+  let plane = null;
+  if (showPlane) {
+    plane = L.marker([origin.lat, origin.lng], {
+      icon: L.divIcon({
+        className: "plane-wrap",
+        html: `<div class="plane-rot">${PLANE_SVG}</div>`,
+        iconSize: [42, 42],
+        iconAnchor: [21, 21],
+      }),
+      pane: "plane",
+      interactive: false,
+      zIndexOffset: 800,
+    }).addTo(map);
+  }
 
   const fit = () => {
     map.invalidateSize();
     map.fitBounds(latLngs, {
       paddingTopLeft: [36, 72],
-      paddingBottomRight: [36, 196],
+      paddingBottomRight: [36, padBottom],
       animate: false,
     });
   };
   fit();
-
-  state.map = map;
-  state.flight = { letter, path, flown, plane, lastBearing: bearingDegrees(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng), arrived: false, lastTrail: 0 };
-
   requestAnimationFrame(fit);
+  return { map, path, flown, plane };
+}
+
+function mountFlight(letter) {
+  const view = mountRouteMap($("map"), letter.from, letter.to, { showPlane: true, padBottom: 196 });
+  state.map = view.map;
+  state.flight = {
+    letter,
+    path: view.path,
+    flown: view.flown,
+    plane: view.plane,
+    originLng: view.path[0].lng,
+    lastBearing: bearingDegrees(letter.from.lat, letter.from.lng, letter.to.lat, letter.to.lng),
+    arrived: false,
+    lastTrail: 0,
+  };
 }
 
 function updatePlane(position, bearing) {
-  const { plane } = state.flight;
-  plane.setLatLng([position.lat, position.lng]);
+  const { plane, originLng } = state.flight;
+  plane.setLatLng([position.lat, alignLongitude(position.lng, originLng)]);
   const el = plane.getElement()?.querySelector(".plane-rot");
   if (el) el.style.transform = `rotate(${bearing}deg)`;
 }
 
 function renderFlightHud(letter, progress, etaSeconds) {
-  setText("flight-route", `${letter.from.name} → ${letter.to.name}`);
+  setText("flight-route", routeLine(letter.from, letter.to));
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
   if (progress >= 1) {
     setText("flight-eta", "已抵達");
-    setText("flight-remain", letter.to.name);
+    setText("flight-remain", pinLabel(letter.to));
     $("btn-open").hidden = false;
     $("flight-track").hidden = true;
   } else {
@@ -665,7 +785,7 @@ async function showRead(id, token) {
   showOnly("read");
   const img = $("read-image");
   img.src = letter.imageUrl;
-  img.alt = `寄給${letter.to.name}的信`;
+  img.alt = `寄給${pinLabel(letter.to)}的信`;
   const when = new Date(letter.deliveredAt || letter.arrivesAt);
   const stamp = when.toLocaleString("zh-TW", {
     month: "numeric",
@@ -673,7 +793,77 @@ async function showRead(id, token) {
     hour: "2-digit",
     minute: "2-digit",
   });
-  $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${letter.to.name}`;
+  const dest = letter.to.city || letter.to.name;
+  const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
+  $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
+}
+
+function clearMap() {
+  if (state.map) {
+    state.map.remove();
+    state.map = null;
+  }
+}
+
+function presentDraw(quote) {
+  state.recipient = quote.to;
+  state.fromId = quote.from.id;
+  state.toId = quote.to.id;
+  showOnly("draw");
+  setText("draw-name", quote.to.name);
+  setText("draw-where", whereLine(quote.to));
+  setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatDuration(quote.durationSeconds)}`);
+  paintSenderChips();
+  $("btn-write").disabled = quote.to.cityId === quote.from.id;
+  clearMap();
+  const view = mountRouteMap($("draw-map"), quote.from, quote.to, { showPlane: false, padBottom: 250 });
+  state.map = view.map;
+}
+
+async function changeDrawSender(cityId) {
+  if (!state.recipient || cityId === state.fromId) return;
+  try {
+    const quote = await api(`/api/route?fromId=${encodeURIComponent(cityId)}&toId=${encodeURIComponent(state.recipient.id)}`);
+    const next = `#/draw?id=${encodeURIComponent(quote.to.id)}&from=${encodeURIComponent(quote.from.id)}`;
+    if (location.hash !== next) history.replaceState(null, "", next);
+    presentDraw(quote);
+  } catch (err) {
+    showToast(err.message);
+    paintSenderChips();
+  }
+}
+
+async function showDraw(params, token) {
+  const fromId = params.get("from") || "taipei";
+  if (!params.get("id")) {
+    const payload = { fromId };
+    if (params.get("exclude")) payload.excludeId = params.get("exclude");
+    const draw = await api("/api/recipients/draw", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (token !== renderToken) return;
+    const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+    if (location.hash !== next) location.replace(next);
+    return;
+  }
+  const quote = await api(`/api/route?fromId=${encodeURIComponent(fromId)}&toId=${encodeURIComponent(params.get("id"))}`);
+  if (token !== renderToken) return;
+  presentDraw(quote);
+}
+
+async function redrawRecipient() {
+  const excludeId = state.recipient?.id;
+  const fromId = state.fromId || "taipei";
+  const payload = { fromId };
+  if (excludeId) payload.excludeId = excludeId;
+  const draw = await api("/api/recipients/draw", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+  if (location.hash === next) presentDraw(draw);
+  else location.replace(next);
 }
 
 async function render() {
@@ -683,6 +873,8 @@ async function render() {
   try {
     if (parts[0] === "compose") {
       await openCompose(params, token);
+    } else if (parts[0] === "draw") {
+      await showDraw(params, token);
     } else if (parts[0] === "flight" && parts[1]) {
       await showFlight(parts[1], token);
     } else if (parts[0] === "read" && parts[1]) {
@@ -709,8 +901,20 @@ function boot() {
   buildPlaceChips();
   buildPresets();
   bindCanvas();
-  $("btn-new").addEventListener("click", () => navigate("#/compose?preset=tpe-khh"));
+  $("btn-draw").addEventListener("click", () => navigate("#/draw"));
+  $("btn-redraw").addEventListener("click", () => {
+    redrawRecipient().catch((err) => showToast(err.message));
+  });
+  $("btn-write").addEventListener("click", () => {
+    if (!state.recipient) return;
+    navigate(`#/compose?from=${encodeURIComponent(state.fromId)}&to=${encodeURIComponent(state.recipient.id)}`);
+  });
+  $("btn-change-recipient").addEventListener("click", () => {
+    if (!state.recipient) return;
+    navigate(`#/draw?from=${encodeURIComponent(state.fromId)}&exclude=${encodeURIComponent(state.recipient.id)}`);
+  });
   $("compose-back").addEventListener("click", () => navigate("#/"));
+  $("draw-back").addEventListener("click", () => navigate("#/"));
   $("flight-back").addEventListener("click", () => navigate("#/"));
   $("read-back").addEventListener("click", () => navigate("#/"));
   $("btn-throw").addEventListener("click", () => submitLetter(true));

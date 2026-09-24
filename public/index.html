@@ -23,12 +23,12 @@
           </header>
           <div id="home-letters"></div>
           <section class="block">
-            <h2>示範路線</h2>
+            <h2>固定路線</h2>
             <div id="preset-list"></div>
           </section>
         </div>
         <div class="dock">
-          <button type="button" class="btn primary" id="btn-new">寫一封信</button>
+          <button type="button" class="btn primary" id="btn-draw">抽一位隨機收件人</button>
         </div>
       </section>
 
@@ -43,6 +43,15 @@
           <h1>寫信</h1>
         </header>
         <div class="compose-body">
+          <div id="recipient-banner" class="recipient-card" hidden>
+            <p class="who" id="recipient-name"></p>
+            <p class="where" id="recipient-where"></p>
+            <button type="button" class="text-btn" id="btn-change-recipient">換一位</button>
+          </div>
+          <fieldset class="panel" id="sender-panel" hidden>
+            <legend>寄出地</legend>
+            <div id="sender-chips" class="chip-scroller"></div>
+          </fieldset>
           <div class="paper-frame">
             <canvas id="letter-canvas" width="600" height="760"></canvas>
           </div>
@@ -52,11 +61,11 @@
             <button type="button" id="btn-clear">清除</button>
             <input id="file-input" type="file" accept="image/*" hidden />
           </div>
-          <fieldset class="panel">
+          <fieldset class="panel" id="from-panel">
             <legend>寄出地</legend>
             <div id="from-chips" class="chips"></div>
           </fieldset>
-          <fieldset class="panel">
+          <fieldset class="panel" id="to-panel">
             <legend>收件地</legend>
             <div id="to-chips" class="chips"></div>
           </fieldset>
@@ -74,6 +83,29 @@
         <div class="dock dock-split">
           <button type="button" class="btn" id="btn-save">儲存草稿</button>
           <button type="button" class="btn primary" id="btn-throw">扔出</button>
+        </div>
+      </section>
+
+      <section id="view-draw" class="view view-flight view-draw" hidden>
+        <div id="draw-map"></div>
+        <button type="button" class="icon-btn float-back" id="draw-back" aria-label="返回">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="sheet">
+          <p class="route" id="draw-kicker">抽到一位收件人</p>
+          <p class="eta" id="draw-name"></p>
+          <p class="remain" id="draw-where"></p>
+          <p class="draw-meta" id="draw-meta"></p>
+          <div class="sender-line">
+            <span>寄出地</span>
+            <div id="draw-senders" class="chip-scroller"></div>
+          </div>
+          <div class="sheet-actions">
+            <button type="button" class="btn" id="btn-redraw">換一位</button>
+            <button type="button" class="btn primary" id="btn-write">寫給這位</button>
+          </div>
         </div>
       </section>
 

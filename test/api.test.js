@@ -187,4 +187,53 @@ test("romantic-slow stretches the same route", async () => {
   });
   assert.ok(slow.body.durationSeconds > fast.body.durationSeconds * 3);
 });
+
+test("random draw avoids the sender city and the last recipient", async () => {
+  const pool = await send(`${base}/api/recipients`);
+  assert.equal(pool.status, 200);
+  assert.ok(pool.body.length >= 12);
+
+  const drawn = await send(`${base}/api/recipients/draw`, {
+    method: "POST",
+    body: JSON.stringify({ fromId: "taipei" }),
+  });
+  assert.equal(drawn.status, 200);
+  assert.notEqual(drawn.body.to.cityId, "taipei");
+  assert.equal(
+    drawn.body.durationSeconds,
+    flightDurationSeconds(drawn.body.distanceKm, "playable-fast"),
+  );
+
+  const other = await send(`${base}/api/recipients/draw`, {
+    method: "POST",
+    body: JSON.stringify({ fromId: "taipei", excludeId: drawn.body.to.id }),
+  });
+  assert.notEqual(other.body.to.id, drawn.body.to.id);
+
+  const sent = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: drawn.body.to.id,
+      launch: true,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(sent.status, 201);
+  assert.equal(sent.body.to.name, drawn.body.to.name);
+  assert.equal(sent.body.to.city, drawn.body.to.city);
+  assert.equal(sent.body.status, "in_flight");
+
+  const afterSend = await send(`${base}/api/recipients/draw`, {
+    method: "POST",
+    body: JSON.stringify({ fromId: "taipei" }),
+  });
+  assert.notEqual(afterSend.body.to.id, drawn.body.to.id);
+
+  const nyc = await send(`${base}/api/route?fromId=taipei&toId=noah`);
+  assert.equal(nyc.status, 200);
+  assert.equal(nyc.body.to.city, "紐約");
+  assert.ok(nyc.body.distanceKm > 10000);
+  assert.equal(nyc.body.durationSeconds, 18 * 60);
+});
 });

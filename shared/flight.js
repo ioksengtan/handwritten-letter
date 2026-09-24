@@ -119,6 +119,31 @@ export function samplePath(from, to, segments = 72) {
   return points;
 }
 
+/** Shift longitude so it sits within 180° of `originLng` (short way around). */
+export function alignLongitude(lng, originLng) {
+  let next = lng;
+  while (next - originLng > 180) next -= 360;
+  while (originLng - next > 180) next += 360;
+  return next;
+}
+
+/**
+ * Rewrite a path so consecutive longitudes take the short way.
+ * Leaflet can then draw Pacific crossings without jumping the long way
+ * across the map.
+ */
+export function unwrapLongitudes(points) {
+  if (!points.length) return [];
+  const out = [{ lat: points[0].lat, lng: points[0].lng }];
+  for (let i = 1; i < points.length; i += 1) {
+    out.push({
+      lat: points[i].lat,
+      lng: alignLongitude(points[i].lng, out[i - 1].lng),
+    });
+  }
+  return out;
+}
+
 /**
  * Derive live flight fields from stored timestamps.
  * `nowMs` is injectable so tests can move the clock without sleeping.

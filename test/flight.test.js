@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  alignLongitude,
   bearingDegrees,
   describeFlight,
   flightDurationSeconds,
   haversineKm,
   interpolate,
   samplePath,
+  unwrapLongitudes,
 } from "../shared/flight.js";
 import { findPlace, PRESETS } from "../shared/places.js";
 
@@ -111,6 +113,21 @@ test("path samples include both ends", () => {
   assert.ok(Math.abs(path.at(-1).lng - to.lng) < 1e-6);
   const bearing = bearingDegrees(from.lat, from.lng, to.lat, to.lng);
   assert.ok(bearing > 30 && bearing < 80, bearing);
+});
+
+test("paths across the Pacific unwrap the short way", () => {
+  const path = unwrapLongitudes(samplePath(
+    { lat: 25.047924, lng: 121.517081 },
+    { lat: 40.758, lng: -73.9855 },
+    24,
+  ));
+  assert.equal(path.length, 25);
+  for (let i = 1; i < path.length; i += 1) {
+    assert.ok(Math.abs(path[i].lng - path[i - 1].lng) <= 180);
+  }
+  const span = Math.abs(path.at(-1).lng - path[0].lng);
+  assert.ok(span < 200 && span > 100, span);
+  assert.equal(alignLongitude(-73.9855, 121.517081), -73.9855 + 360);
 });
 
 test("a stored delivered letter stays at the destination", () => {
