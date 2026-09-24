@@ -403,6 +403,6 @@ const isMain =
 if (isMain) {
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => {
-    console.log(`手寫信  http://localhost:${port}`);
+    console.log(`在路上  http://localhost:${port}`);
   });
 }

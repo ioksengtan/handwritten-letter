@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "依真實地理距離飛行的手寫信傳遞原型",
+  "description": "在路上：依真實地理距離飛行的手寫信傳遞原型",
   "engines": {
     "node": ">=18"
   },
