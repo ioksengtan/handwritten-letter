@@ -2,9 +2,10 @@
  * Flight duration and position.
  *
  * The server stores departedAt and arrivesAt. Progress is the fraction of
- * that window that has elapsed. When the letter has courier legs, the
- * position walks those legs in order. Otherwise it follows one great circle.
- * The client only draws that position — it never decides when a letter lands.
+ * that window that has elapsed. The pigeon sits on the great circle from
+ * the stored origin to the stored destination, even when an older letter
+ * still has several courier legs saved on it. The client only draws that
+ * position — it never decides when a letter lands.
  *
  * romantic-slow (default): postal waiting, not a sped-up flight.
  *   city (< 80 km): about 1 day (26–28 hours before a small fixed wobble)
@@ -250,55 +251,27 @@ export function unwrapLongitudes(points) {
   return out;
 }
 
-/** Where the courier is after `elapsedSeconds` along sequential legs. */
-export function locateOnLegs(legs, elapsedSeconds) {
-  const total = legs.reduce((sum, leg) => sum + leg.durationSeconds, 0) || 1;
-  let left = Math.min(Math.max(0, elapsedSeconds), total);
-  for (let i = 0; i < legs.length; i += 1) {
-    const leg = legs[i];
-    const last = i === legs.length - 1;
-    if (left < leg.durationSeconds || last) {
-      const frac = leg.durationSeconds <= 0 ? 1 : Math.min(1, left / leg.durationSeconds);
-      const later = legs.slice(i + 1).reduce((sum, item) => sum + item.distanceKm, 0);
-      return {
-        legIndex: i,
-        mode: leg.mode,
-        legFraction: frac,
-        position: interpolate(leg.from.lat, leg.from.lng, leg.to.lat, leg.to.lng, frac),
-        remainingKm: leg.distanceKm * (1 - frac) + later,
-      };
-    }
-    left -= leg.durationSeconds;
-  }
-  const last = legs[legs.length - 1];
-  return {
-    legIndex: legs.length - 1,
-    mode: last.mode,
-    legFraction: 1,
-    position: { lat: last.to.lat, lng: last.to.lng },
-    remainingKm: 0,
-  };
-}
-
 /**
  * Derive live flight fields from stored timestamps.
  * `nowMs` is injectable so tests can move the clock without sleeping.
+ * Stored legs, including an older multi-leg courier, do not move the pigeon.
  */
 export function describeFlight(letter, nowMs) {
   const origin = { lat: letter.from.lat, lng: letter.from.lng };
   const dest = { lat: letter.to.lat, lng: letter.to.lng };
-
-  const legs = Array.isArray(letter.legs) ? letter.legs : [];
+  const distanceKm = Number.isFinite(letter.distanceKm)
+    ? letter.distanceKm
+    : haversineKm(origin.lat, origin.lng, dest.lat, dest.lng);
 
   if (letter.status === "draft" || !letter.departedAt || !letter.arrivesAt) {
     return {
       status: "draft",
       progress: 0,
       position: origin,
-      remainingKm: letter.distanceKm,
+      remainingKm: distanceKm,
       etaSeconds: null,
-      mode: legs[0]?.mode || null,
-      legIndex: legs.length ? 0 : null,
+      mode: null,
+      legIndex: null,
     };
   }
 
@@ -310,36 +283,13 @@ export function describeFlight(letter, nowMs) {
   progress = clamp(progress, 0, 1);
   const arrived = letter.status === "delivered" || progress >= 1;
 
-  let position;
-  let remainingKm;
-  let mode = null;
-  let legIndex = null;
-  if (legs.length) {
-    const total = legs.reduce((sum, leg) => sum + leg.durationSeconds, 0) || 1;
-    const elapsed = arrived ? total : clamp((nowMs - start) / 1000, 0, total);
-    const loc = locateOnLegs(legs, elapsed);
-    position = loc.position;
-    remainingKm = arrived ? 0 : loc.remainingKm;
-    mode = loc.mode;
-    legIndex = loc.legIndex;
-    if (arrived) {
-      const last = legs[legs.length - 1];
-      position = { lat: last.to.lat, lng: last.to.lng };
-      mode = last.mode;
-      legIndex = legs.length - 1;
-    }
-  } else {
-    position = interpolate(origin.lat, origin.lng, dest.lat, dest.lng, progress);
-    remainingKm = letter.distanceKm * (1 - progress);
-  }
-
   return {
     status: arrived ? "delivered" : "in_flight",
     progress,
-    position,
-    remainingKm,
+    position: interpolate(origin.lat, origin.lng, dest.lat, dest.lng, progress),
+    remainingKm: arrived ? 0 : distanceKm * (1 - progress),
     etaSeconds: arrived ? 0 : Math.max(0, (end - nowMs) / 1000),
-    mode,
-    legIndex,
+    mode: "pigeon",
+    legIndex: null,
   };
 }

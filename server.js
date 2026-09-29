@@ -119,17 +119,6 @@ function toPublic(letter, nowMs) {
   };
 }
 
-function legsOf(letter) {
-  if (Array.isArray(letter.legs) && letter.legs.length) return letter.legs;
-  return [{
-    mode: "plane",
-    from: { name: letter.from.name, lat: letter.from.lat, lng: letter.from.lng },
-    to: { name: letter.to.name, lat: letter.to.lat, lng: letter.to.lng },
-    distanceKm: letter.distanceKm,
-    durationSeconds: letter.durationSeconds || 1,
-  }];
-}
-
 export function createApp({
   dataDir = path.join(root, "data"),
   now = () => Date.now(),
@@ -228,7 +217,8 @@ export function createApp({
       ...letters.filter((letter) => letter.status === "in_flight").map((letter) => ({
         id: letter.id,
         kind: "yours",
-        legs: legsOf(letter),
+        from: letter.from,
+        to: letter.to,
         departedAt: letter.departedAt,
         arrivesAt: letter.arrivesAt,
       })),

@@ -445,8 +445,7 @@ button:focus-visible {
 .view-flight .mode-now,
 .view-flight .eta,
 .view-flight .remain,
-.view-flight .travel-count,
-.view-flight .leg-legend {
+.view-flight .travel-count {
   font-family: var(--serif);
 }
 
@@ -779,79 +778,9 @@ button:focus-visible {
   line-height: 1.45;
 }
 
-.leg-legend {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 10px;
-}
-
-.leg-legend .leg {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.leg-legend .leg.is-active {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.leg-legend .leg {
-  font-family: var(--serif);
-  letter-spacing: 0.06em;
-}
-
-.leg-legend i {
-  display: block;
-  width: 22px;
-  height: 0;
-  border: none;
-  border-top: 2px solid #6a3b28;
-  border-radius: 0;
-  background: none;
-}
-
-.leg-road i { border-top-style: solid; border-top-color: #6a3b28; }
-.leg-train i { border-top-style: dashed; border-top-color: #3d4a34; }
-.leg-plane i { border-top-style: dotted; border-top-color: #1c3356; }
-
-.leg-legend .leg.is-active i { border-top-width: 3px; }
-
-.leg-arrow {
-  color: #a08a74;
-  font-size: 12px;
-}
-
-.mode-badge,
 .traffic-icon {
   background: transparent;
   border: none;
-}
-
-.mode-badge-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  box-shadow: none;
-  border: 1px solid rgba(63, 52, 44, 0.35);
-}
-
-.mode-badge-icon svg {
-  width: 14px;
-  height: 14px;
-}
-
-.dot-hub {
-  width: 8px;
-  height: 8px;
-  background: #fff;
-  box-shadow: 0 0 0 2px #5c6b7a;
 }
 
 .traffic-dot {
@@ -897,9 +826,34 @@ button:focus-visible {
 }
 
 .dot-icon,
-.plane-wrap {
+.pigeon-mark {
   background: transparent;
   border: none;
+}
+
+.pigeon-mark,
+.pigeon-rot {
+  overflow: visible;
+}
+
+.pigeon-rot {
+  width: 96px;
+  height: 68px;
+  position: relative;
+  transform-origin: 40px 42px;
+}
+
+.pigeon-ghost,
+.pigeon-ink {
+  position: absolute;
+  inset: 0;
+  display: block;
+  line-height: 0;
+}
+
+.pigeon-ghost {
+  transform: translate(6px, -3px);
+  opacity: 0.5;
 }
 
 .dot {
@@ -917,16 +871,6 @@ button:focus-visible {
 }
 
 .dot-dest { background: #3f342c; }
-
-.plane-rot {
-  width: 42px;
-  height: 42px;
-  transform-origin: 50% 50%;
-}
-
-.plane-rot svg {
-  display: block;
-}
 
 .city-label {
   background: rgba(243, 236, 223, 0.92);
@@ -985,103 +929,11 @@ button:focus-visible {
   color: #6a5646;
 }
 
-.transfer-banner {
-  position: absolute;
-  z-index: 3;
-  left: 16px;
-  right: 16px;
-  top: 16%;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.postal-sticker,
 .postage-seal {
   --ink: var(--stamp);
   color: var(--ink);
   background-color: var(--stock);
   background-image: var(--paper-grain);
-}
-
-.postal-sticker {
-  position: relative;
-  width: min(100%, 272px);
-  padding: 16px 18px 18px;
-  border: 1.5px solid rgba(122, 52, 46, 0.82);
-  box-shadow:
-    2px -1px 0 rgba(122, 52, 46, 0.22),
-    0 12px 16px rgba(48, 32, 18, 0.14);
-  transform: rotate(-1.5deg);
-}
-
-.postal-sticker::before {
-  content: "";
-  position: absolute;
-  inset: 6px;
-  border: 1px dashed rgba(122, 52, 46, 0.45);
-  pointer-events: none;
-}
-
-.postal-sticker::after {
-  content: "";
-  position: absolute;
-  left: -8px;
-  right: -10px;
-  bottom: 22px;
-  height: 12px;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='72' height='12' viewBox='0 0 72 12'><path d='M0 7 C6 1 12 1 18 7 S30 13 36 7 S48 1 54 7 S66 13 72 7' fill='none' stroke='%237a342e' stroke-width='1.2' opacity='0.55'/></svg>") 0 50% / 72px 12px repeat-x;
-  transform: rotate(-1.5deg);
-  pointer-events: none;
-}
-
-.transfer-banner.is-on .postal-sticker {
-  animation: transfer-pop 3.4s ease forwards;
-}
-
-.sticker-place,
-.sticker-line,
-.sticker-mode {
-  position: relative;
-  z-index: 1;
-  margin: 0;
-}
-
-.sticker-place {
-  color: var(--stamp);
-  font-size: 13px;
-  letter-spacing: 0.18em;
-}
-
-.sticker-line {
-  margin-top: 7px;
-  color: #2c261f;
-  font-size: 17px;
-  font-weight: 500;
-  line-height: 1.45;
-}
-
-.sticker-mode {
-  margin-top: 12px;
-  color: var(--stamp);
-  font-size: 12px;
-  letter-spacing: 0.28em;
-}
-
-.plane-wrap.is-transfer .courier-glyph {
-  animation: courier-pop 0.7s ease-out;
-}
-
-@keyframes transfer-pop {
-  0% { opacity: 0; transform: translateY(12px) rotate(-3.4deg); }
-  18% { opacity: 1; transform: translateY(0) rotate(-1.5deg); }
-  82% { opacity: 1; transform: rotate(-1.5deg); }
-  100% { opacity: 0; transform: translateY(8px) rotate(-1deg); }
-}
-
-@keyframes courier-pop {
-  45% { transform: rotate(-4deg); }
-  100% { transform: rotate(0deg); }
 }
 
 .post-stage {
@@ -1673,13 +1525,11 @@ button:focus-visible {
   .post-letter-wrap,
   .postbox-flap,
   .postbox-body,
-  .postal-sticker,
   .envelope-flap,
   .envelope-pocket,
   .envelope-lining,
   .tear-strip,
-  .ceremony-letter,
-  .plane-wrap.is-transfer .courier-glyph {
+  .ceremony-letter {
     animation: none !important;
   }
 }

@@ -273,12 +273,9 @@ test("random draw avoids the sender city and the last recipient", async () => {
   assert.ok(nyc.body.distanceKm > 10000);
   assert.ok(nyc.body.durationSeconds >= 7 * 86400);
   assert.ok(nyc.body.durationSeconds <= 14 * 86400);
-  assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(
-    nyc.body.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
-    nyc.body.durationSeconds,
-  );
-  assert.ok(nyc.body.legs[1].durationSeconds < nyc.body.legs[0].durationSeconds);
+  assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["pigeon"]);
+  assert.equal(nyc.body.legs[0].durationSeconds, nyc.body.durationSeconds);
+  assert.equal(nyc.body.legs[0].to.name, "紐約");
 
   const london = await send(`${base}/api/route?fromId=taipei&toId=ellen`);
   assert.ok(london.body.durationSeconds >= 8 * 86400);
@@ -287,7 +284,8 @@ test("random draw avoids the sender city and the last recipient", async () => {
   const fast = await send(`${base}/api/route?fromId=taipei&toId=noah&pace=playable-fast`);
   assert.equal(fast.body.pace, "playable-fast");
   assert.equal(fast.body.durationSeconds, 18 * 60);
-  assert.ok(fast.body.legs[1].durationSeconds > fast.body.legs[0].durationSeconds);
+  assert.equal(fast.body.legs.length, 1);
+  assert.equal(fast.body.legs[0].durationSeconds, fast.body.durationSeconds);
 });
 
 test("activity counts real flights plus background trips", async () => {
@@ -312,19 +310,19 @@ test("activity counts real flights plus background trips", async () => {
     }),
   });
   assert.equal(created.status, 201);
-  assert.deepEqual(created.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(created.body.mode, "road");
+  assert.deepEqual(created.body.legs.map((leg) => leg.mode), ["pigeon"]);
+  assert.equal(created.body.mode, "pigeon");
+  assert.equal(created.body.legIndex, null);
 
   const after = await send(`${base}/api/activity`);
   assert.equal(after.body.traveling, before.body.traveling + 1);
   assert.ok(after.body.trips.some((trip) => trip.id === created.body.id && trip.kind === "yours"));
 
-  const roadSeconds = created.body.legs[0].durationSeconds;
-  const planeSeconds = created.body.legs[1].durationSeconds;
-  nowMs += (roadSeconds + planeSeconds * 0.15) * 1000;
+  nowMs += created.body.durationSeconds * 0.4 * 1000;
   const flying = await send(`${base}/api/letters/${created.body.id}`);
-  assert.equal(flying.body.mode, "plane");
-  assert.equal(flying.body.legIndex, 1);
+  assert.equal(flying.body.mode, "pigeon");
+  assert.equal(flying.body.legIndex, null);
+  assert.ok(flying.body.progress > 0.35 && flying.body.progress < 0.45, flying.body.progress);
   assert.ok(haversineKm(flying.body.position.lat, flying.body.position.lng, 25.047924, 121.517081) > 30);
 });
 

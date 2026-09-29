@@ -4,58 +4,18 @@ import {
   describeFlight,
   flightDurationSeconds,
   haversineKm,
-  locateOnLegs,
+  interpolate,
   postalBand,
   routeJitterSeconds,
 } from "../shared/flight.js";
 import { findPlace } from "../shared/places.js";
 import { findRecipient } from "../shared/recipients.js";
-import {
-  backgroundPlans,
-  legProgressLine,
-  legVia,
-  nearestHub,
-  planCourier,
-  transferBeat,
-} from "../shared/route.js";
+import { backgroundPlans, planCourier } from "../shared/route.js";
 
 function place(id) {
   const point = findPlace(id);
   return { name: point.name, country: point.country, lat: point.lat, lng: point.lng };
 }
-
-test("short hops stay on the road and island hops take the train", () => {
-  const local = planCourier({ from: place("taipei"), to: place("taipei101") });
-  assert.deepEqual(local.legs.map((leg) => leg.mode), ["road"]);
-  assert.equal(local.legs[0].durationSeconds, local.durationSeconds);
-
-  const island = planCourier({ from: place("taipei"), to: place("kaohsiung") });
-  assert.deepEqual(island.legs.map((leg) => leg.mode), ["train"]);
-  assert.equal(island.legs[0].to.name, "高雄");
-  assert.ok(island.durationSeconds > local.durationSeconds);
-});
-
-test("an overseas letter goes road, plane, then road", () => {
-  const noah = findRecipient("noah");
-  const plan = planCourier({
-    from: place("taipei"),
-    to: { name: noah.name, city: noah.city, country: noah.country, lat: noah.lat, lng: noah.lng },
-    pace: "playable-fast",
-  });
-  assert.deepEqual(plan.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(plan.legs[0].to.name, "桃園機場");
-  assert.equal(plan.legs[1].from.name, "桃園機場");
-  assert.equal(plan.legs[1].to.name, "甘迺迪機場");
-  assert.equal(plan.legs[2].to.name, "紐約");
-  assert.equal(plan.durationSeconds, 18 * 60);
-  assert.equal(
-    plan.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
-    plan.durationSeconds,
-  );
-  assert.ok(plan.legs[1].durationSeconds > plan.legs[0].durationSeconds);
-  assert.match(legVia(plan.legs), /公路到桃園機場/);
-  assert.equal(nearestHub(place("taipei")).id, "TPE");
-});
 
 function person(id) {
   const point = findRecipient(id);
@@ -67,6 +27,30 @@ function person(id) {
     lng: point.lng,
   };
 }
+
+test("every trip is one pigeon on the great circle", () => {
+  const local = planCourier({ from: place("taipei"), to: place("taipei101") });
+  const island = planCourier({ from: place("taipei"), to: place("kaohsiung") });
+  const noah = findRecipient("noah");
+  const overseas = planCourier({
+    from: place("taipei"),
+    to: { name: noah.city, country: noah.country, lat: noah.lat, lng: noah.lng },
+    pace: "playable-fast",
+  });
+
+  for (const plan of [local, island, overseas]) {
+    assert.equal(plan.legs.length, 1);
+    assert.equal(plan.legs[0].mode, "pigeon");
+    assert.equal(plan.legs[0].from.name, plan.from.name);
+    assert.equal(plan.legs[0].to.name, plan.to.name);
+    assert.equal(plan.legs[0].durationSeconds, plan.durationSeconds);
+    assert.equal(plan.legs[0].distanceKm, plan.distanceKm);
+  }
+  assert.equal(island.legs[0].to.name, "高雄");
+  assert.ok(island.durationSeconds > local.durationSeconds);
+  assert.equal(overseas.durationSeconds, 18 * 60);
+  assert.equal(overseas.to.name, "紐約");
+});
 
 const DAY = 24 * 60 * 60;
 
@@ -95,21 +79,14 @@ test("romantic-slow is the default and matches postal waits", () => {
   assert.ok(tokyo.durationSeconds >= 4 * DAY && tokyo.durationSeconds <= 6 * DAY, tokyo.durationSeconds);
   assert.ok(hongKong.durationSeconds >= 4 * DAY && hongKong.durationSeconds <= 6 * DAY, hongKong.durationSeconds);
   assert.ok(london.durationSeconds >= 8 * DAY && london.durationSeconds <= 10 * DAY, london.durationSeconds);
-  assert.ok(nyc.durationSeconds >= 7 * DAY && nyc.durationSeconds <= 14 * DAY, nyc.durationSeconds);
+  assert.ok(nyc.durationSeconds >= 9 * DAY && nyc.durationSeconds <= 12 * DAY, nyc.durationSeconds);
   assert.ok(sydney.durationSeconds >= 7 * DAY && sydney.durationSeconds < london.durationSeconds, sydney.durationSeconds);
   assert.ok(city.durationSeconds < island.durationSeconds);
   assert.ok(island.durationSeconds < tokyo.durationSeconds);
   assert.ok(tokyo.durationSeconds < london.durationSeconds);
   assert.ok(london.durationSeconds < nyc.durationSeconds);
   assert.equal(london.durationSeconds, londonAgain.durationSeconds);
-
-  assert.equal(
-    london.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
-    london.durationSeconds,
-  );
-  assert.equal(london.legs[1].mode, "plane");
-  assert.ok(london.legs[1].durationSeconds < london.legs[0].durationSeconds);
-  assert.ok(london.legs[1].durationSeconds < london.legs[2].durationSeconds);
+  assert.equal(london.legs[0].durationSeconds, london.durationSeconds);
 
   const jitter = routeJitterSeconds(place("taipei"), person("ellen"), london.distanceKm);
   assert.equal(jitter, routeJitterSeconds(place("taipei"), person("ellen"), london.distanceKm));
@@ -126,7 +103,7 @@ test("romantic-slow is the default and matches postal waits", () => {
   assert.ok(samples.some((value) => value >= 30 * 60), samples.join(","));
 });
 
-test("a multi-day letter keeps its place along the legs", () => {
+test("a pigeon moves linearly along the great circle", () => {
   const from = place("taipei");
   const ellen = person("ellen");
   const plan = planCourier({ from, to: ellen });
@@ -143,91 +120,56 @@ test("a multi-day letter keeps its place along the legs", () => {
   const at = (fraction) => describeFlight(letter, start + fraction * plan.durationSeconds * 1000);
   const early = at(0.05);
   assert.equal(early.status, "in_flight");
-  assert.equal(early.legIndex, 0);
-  assert.equal(early.mode, "road");
+  assert.equal(early.mode, "pigeon");
+  assert.equal(early.legIndex, null);
   assert.ok(Math.abs(early.progress - 0.05) < 0.002, early.progress);
   const mid = at(0.5);
-  assert.equal(mid.mode, "plane");
-  assert.equal(mid.legIndex, 1);
-  assert.ok(Math.abs(mid.progress - 0.5) < 0.002, mid.progress);
-  const late = at(0.9);
-  assert.equal(late.mode, "road");
-  assert.equal(late.legIndex, 2);
-  assert.ok(late.remainingKm < early.remainingKm);
+  const direct = interpolate(from.lat, from.lng, ellen.lat, ellen.lng, 0.5);
+  assert.ok(Math.abs(mid.position.lat - direct.lat) < 1e-6);
+  assert.ok(Math.abs(mid.position.lng - direct.lng) < 1e-6);
+  assert.ok(Math.abs(mid.remainingKm - plan.distanceKm * 0.5) < 0.01);
   const done = describeFlight(
     { ...letter, status: "delivered" },
     start + plan.durationSeconds * 1000,
   );
   assert.equal(done.progress, 1);
   assert.equal(done.etaSeconds, 0);
+  assert.equal(done.remainingKm, 0);
   assert.ok(Math.abs(done.position.lat - ellen.lat) < 1e-6);
 });
 
-test("a long domestic hop uses the nearest airports", () => {
-  const plan = planCourier({
-    from: { name: "紐約", country: "美國", lat: 40.758, lng: -73.9855 },
-    to: { name: "洛杉磯", country: "美國", lat: 34.0522, lng: -118.2437 },
-  });
-  assert.deepEqual(plan.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(plan.legs[1].from.name, "甘迺迪機場");
-  assert.equal(plan.legs[1].to.name, "洛杉磯機場");
-});
-
-test("leg changes read as a transfer at the hub", () => {
-  const plan = planCourier({ from: place("taipei"), to: place("tokyo") });
-  assert.equal(transferBeat(null, plan.legs[0]), null);
-  const toPlane = transferBeat(plan.legs[0], plan.legs[1]);
-  assert.equal(toPlane.hub, "桃園機場");
-  assert.equal(toPlane.line, "正在桃園機場轉運，改搭飛機");
-  assert.equal(toPlane.mode, "plane");
-  const toRoad = transferBeat(plan.legs[1], plan.legs[2]);
-  assert.equal(toRoad.line, "正在羽田機場轉運，改走公路");
-  assert.match(legProgressLine(plan.legs[0], { index: 0, count: 3 }), /公路上，送往桃園機場/);
-  assert.match(legProgressLine(plan.legs[1], { index: 1, count: 3 }), /飛機上，前往羽田機場/);
-  assert.match(legProgressLine(plan.legs[2], { index: 2, count: 3 }), /最後一段公路，送往東京/);
-
-  const train = planCourier({ from: place("taipei"), to: place("kaohsiung") });
-  assert.equal(legProgressLine(train.legs[0], { index: 0, count: 1 }), "火車上，前往高雄");
-  const local = planCourier({ from: place("taipei"), to: place("taipei101") });
-  assert.equal(legProgressLine(local.legs[0], { index: 0, count: 1 }), "公路上，前往台北101");
-});
-
-test("the courier changes mode in time order and does not teleport", () => {
-  const noah = findRecipient("noah");
+test("an older multi-leg letter still flies one pigeon line and arrives", () => {
   const from = place("taipei");
-  const to = { name: noah.name, country: noah.country, lat: noah.lat, lng: noah.lng };
-  const plan = planCourier({ from, to });
+  const ellen = person("ellen");
+  const distanceKm = haversineKm(from.lat, from.lng, ellen.lat, ellen.lng);
   const letter = {
     status: "in_flight",
     from,
-    to,
-    distanceKm: plan.distanceKm,
-    legs: plan.legs,
+    to: ellen,
+    distanceKm,
+    legs: [
+      { mode: "road", from, to: { name: "桃園機場", lat: 25.0777, lng: 121.2328 }, distanceKm: 30, durationSeconds: 4 * DAY },
+      { mode: "plane", from: { name: "桃園機場", lat: 25.0777, lng: 121.2328 }, to: { name: "希斯洛機場", lat: 51.47, lng: -0.4543 }, distanceKm: 9700, durationSeconds: 16 * 3600 },
+      { mode: "road", from: { name: "希斯洛機場", lat: 51.47, lng: -0.4543 }, to: ellen, distanceKm: 20, durationSeconds: 4 * DAY },
+    ],
     departedAt: new Date(0).toISOString(),
-    arrivesAt: new Date(plan.durationSeconds * 1000).toISOString(),
+    arrivesAt: new Date(10 * DAY * 1000).toISOString(),
   };
+  const mid = describeFlight(letter, 5 * DAY * 1000);
+  const direct = interpolate(from.lat, from.lng, ellen.lat, ellen.lng, 0.5);
+  assert.equal(mid.status, "in_flight");
+  assert.equal(mid.mode, "pigeon");
+  assert.equal(mid.legIndex, null);
+  assert.ok(Math.abs(mid.position.lat - direct.lat) < 1e-6);
+  assert.ok(Math.abs(mid.position.lng - direct.lng) < 1e-6);
+  assert.ok(haversineKm(mid.position.lat, mid.position.lng, 25.0777, 121.2328) > 100);
 
-  const early = describeFlight(letter, 5_000);
-  assert.equal(early.mode, "road");
-  assert.equal(early.legIndex, 0);
-  assert.ok(haversineKm(early.position.lat, early.position.lng, from.lat, from.lng) < 40);
-
-  const planeAt = (plan.legs[0].durationSeconds + 5) * 1000;
-  const flying = describeFlight(letter, planeAt);
-  assert.equal(flying.mode, "plane");
-  assert.equal(flying.legIndex, 1);
-  assert.ok(flying.remainingKm < plan.legs[1].distanceKm + plan.legs[2].distanceKm);
-
-  const late = describeFlight(letter, (plan.durationSeconds - 5) * 1000);
-  assert.equal(late.mode, "road");
-  assert.equal(late.legIndex, 2);
-  assert.ok(haversineKm(late.position.lat, late.position.lng, noah.lat, noah.lng) < 40);
-  assert.ok(late.remainingKm < early.remainingKm);
-
-  const done = describeFlight({ ...letter, status: "delivered" }, plan.durationSeconds * 1000);
+  const done = describeFlight(letter, 10 * DAY * 1000);
   assert.equal(done.status, "delivered");
-  assert.ok(Math.abs(done.position.lat - noah.lat) < 1e-6);
-  assert.equal(locateOnLegs(plan.legs, 0).mode, "road");
+  assert.equal(done.progress, 1);
+  assert.equal(done.remainingKm, 0);
+  assert.ok(Math.abs(done.position.lat - ellen.lat) < 1e-6);
+  assert.ok(Math.abs(done.position.lng - ellen.lng) < 1e-6);
 });
 
 test("background trips stay in transit without letter faces", () => {
@@ -236,7 +178,10 @@ test("background trips stay in transit without letter faces", () => {
   const ids = new Set(plans.map((item) => item.id));
   assert.equal(ids.size, plans.length);
   for (const item of plans) {
-    assert.ok(item.plan.legs.length >= 1);
+    assert.equal(item.plan.legs.length, 1);
+    assert.equal(item.plan.legs[0].mode, "pigeon");
     assert.equal(item.plan.legs.some((leg) => leg.imageUrl), false);
+    assert.equal(item.plan.from.name, item.plan.legs[0].from.name);
+    assert.equal(item.plan.to.name, item.plan.legs[0].to.name);
   }
 });
