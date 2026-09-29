@@ -78,13 +78,13 @@
           </fieldset>
           <div class="estimate" id="estimate"></div>
           <div class="pace-row">
-            <span>節奏</span>
-            <div class="segment" role="group" aria-label="飛行節奏">
-              <button type="button" id="pace-fast" data-pace="playable-fast" aria-pressed="true">可玩快</button>
-              <button type="button" id="pace-slow" data-pace="romantic-slow" aria-pressed="false">浪漫慢</button>
+            <span>郵寄時間</span>
+            <div class="segment" role="group" aria-label="郵寄時間">
+              <button type="button" id="pace-slow" data-pace="romantic-slow" aria-pressed="true">浪漫慢</button>
+              <button type="button" id="pace-fast" data-pace="playable-fast" aria-pressed="false" title="測試用，一分鐘內可看完">可玩快</button>
             </div>
           </div>
-          <p class="hint" id="pace-hint" hidden>預留節奏。同樣的距離會飛得慢很多。</p>
+          <p class="hint" id="pace-hint">像真正的國際信件。同城約一天，國內兩三天，鄰近區域約四五天到一週，跨洲要一到兩週。</p>
         </div>
         </div>
         <div class="dock dock-split">
@@ -137,6 +137,7 @@
           <p class="route" id="flight-route"></p>
           <p class="mode-now" id="flight-mode"></p>
           <p class="eta" id="flight-eta"></p>
+          <p class="countdown" id="flight-countdown"></p>
           <p class="remain" id="flight-remain"></p>
           <div class="leg-legend" id="flight-legend"></div>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>

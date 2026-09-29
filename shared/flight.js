@@ -6,15 +6,26 @@
  * position walks those legs in order. Otherwise it follows one great circle.
  * The client only draws that position — it never decides when a letter lands.
  *
- * playable-fast (default):
+ * romantic-slow (default): postal waiting, not a sped-up flight.
+ *   city (< 80 km): about 1 day (26–28 hours before a small fixed wobble)
+ *   domestic (same country): 2–3 days, longer hops closer to 3
+ *   nearby (same continent, under 6000 km, another country): 4–6 days
+ *   far (another continent, or same continent beyond 6000 km):
+ *     days = clamp(7 + 7 * (km - 6500) / 12500, 7, 14)
+ *     6500 km is 7 days, 19000 km is 14 days.
+ *   A coordinate hash adds about ±2 hours in a city and ±4 hours otherwise.
+ *   The same endpoints always get the same wobble, and the result stays
+ *   inside that band. Taipei → London (about 9781 km) lands in 8–10 days.
+ *
+ * playable-fast (testing):
  *   seconds = clamp(12 * sqrt(distanceKm), 25, 18 * 60)
  *   Same-city hops land in tens of seconds, cross-city in a few minutes,
  *   and intercontinental flights stop at 18 minutes (inside 10–20).
- *
- * romantic-slow (reserved pace, not the default):
- *   seconds = clamp(70 * sqrt(distanceKm), 3 * 60, 90 * 60)
- *   Ocean crossings sit around an hour.
  */
+
+export const DEFAULT_PACE = "romantic-slow";
+
+const DAY = 24 * 60 * 60;
 
 export const PACES = {
   "playable-fast": {
@@ -27,11 +38,39 @@ export const PACES = {
   "romantic-slow": {
     id: "romantic-slow",
     label: "浪漫慢",
-    factor: 70,
-    minSeconds: 3 * 60,
-    maxSeconds: 90 * 60,
   },
 };
+
+/** Countries in the demo pool. Places carry a country; recipients also carry a continent. */
+const COUNTRY_CONTINENT = {
+  台灣: "亞洲",
+  日本: "亞洲",
+  韓國: "亞洲",
+  香港: "亞洲",
+  新加坡: "亞洲",
+  泰國: "亞洲",
+  葡萄牙: "歐洲",
+  法國: "歐洲",
+  英國: "歐洲",
+  德國: "歐洲",
+  義大利: "歐洲",
+  埃及: "非洲",
+  南非: "非洲",
+  肯亞: "非洲",
+  美國: "美洲",
+  加拿大: "美洲",
+  墨西哥: "美洲",
+  巴西: "美洲",
+  澳洲: "大洋洲",
+  紐西蘭: "大洋洲",
+};
+
+export function continentOf(point) {
+  if (!point) return null;
+  if (point.continent) return point.continent;
+  if (point.country && COUNTRY_CONTINENT[point.country]) return COUNTRY_CONTINENT[point.country];
+  return null;
+}
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -58,10 +97,76 @@ export function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-export function flightDurationSeconds(distanceKm, pace = "playable-fast") {
+/**
+ * Stable wobble in seconds, centered on zero.
+ * City routes stay within about two hours; everything else within about four.
+ */
+export function routeJitterSeconds(from, to, distanceKm) {
+  if (!from || !to || !Number.isFinite(Number(from.lat)) || !Number.isFinite(Number(to.lat))) {
+    return 0;
+  }
+  const key = [from.lat, from.lng, to.lat, to.lng].map((n) => Number(n).toFixed(4)).join("|");
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const centered = ((hash >>> 0) / 4294967295) * 2 - 1;
+  const cap = distanceKm < 80 ? 2 * 60 * 60 : 4 * 60 * 60;
+  return Math.round(centered * cap);
+}
+
+/**
+ * city | domestic | region | far.
+ * Without endpoints, distance stands in for geography:
+ * under 900 km domestic, under 6000 km nearby, otherwise far.
+ */
+export function postalBand(distanceKm, from, to) {
+  const km = Math.max(0, Number(distanceKm) || 0);
+  const sameCountry = Boolean(from?.country && to?.country && from.country === to.country);
+  const fromContinent = continentOf(from);
+  const toContinent = continentOf(to);
+  const sameContinent = Boolean(fromContinent && toContinent && fromContinent === toContinent);
+  const knownGeo = Boolean(from?.country || to?.country || fromContinent || toContinent);
+  if (km < 80) return "city";
+  if (sameCountry || (!knownGeo && km < 900)) return "domestic";
+  if ((sameContinent && km < 6000) || (!knownGeo && km < 6000)) return "region";
+  return "far";
+}
+
+function postalDays(distanceKm, from, to) {
+  const km = Math.max(0, Number(distanceKm) || 0);
+  const band = postalBand(km, from, to);
+  if (band === "city") {
+    return { band, min: 1, max: 1.25, days: 26 / 24 + (km / 80) * (2 / 24) };
+  }
+  if (band === "domestic") {
+    const t = clamp((Math.log(km) - Math.log(80)) / (Math.log(5000) - Math.log(80)), 0, 1);
+    return { band, min: 2, max: 3, days: 2.25 + t * 0.5 };
+  }
+  if (band === "region") {
+    const t = clamp(
+      (Math.log(Math.max(km, 300)) - Math.log(300)) / (Math.log(6000) - Math.log(300)),
+      0,
+      1,
+    );
+    return { band, min: 4, max: 6, days: 4.35 + t * 1.3 };
+  }
+  const days = 7 + 7 * clamp((km - 6500) / 12500, 0, 1);
+  return { band, min: 7, max: 14, days };
+}
+
+export function flightDurationSeconds(distanceKm, pace = DEFAULT_PACE, ends = null) {
   const cfg = PACES[pace];
   if (!cfg) {
     throw new Error(`unknown pace: ${pace}`);
+  }
+  if (pace === "romantic-slow") {
+    const km = Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 0;
+    const postal = postalDays(km, ends?.from, ends?.to);
+    let seconds = Math.round(postal.days * DAY);
+    if (ends?.vary !== false) seconds += routeJitterSeconds(ends?.from, ends?.to, km);
+    return Math.round(clamp(seconds, postal.min * DAY, postal.max * DAY));
   }
   if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
     return cfg.minSeconds;

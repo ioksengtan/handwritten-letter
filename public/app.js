@@ -1,4 +1,6 @@
 import {
+  DEFAULT_PACE,
+  PACES,
   alignLongitude,
   bearingDegrees,
   haversineKm,
@@ -9,7 +11,7 @@ import {
 import { PLACES, findPlace, findPreset } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
 import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
-import { formatPostalDate, formatPostalStamp } from "/shared/clock.js";
+import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
@@ -44,7 +46,7 @@ const state = {
   toId: "kaohsiung",
   recipient: null,
   mode: "preset",
-  pace: "playable-fast",
+  pace: DEFAULT_PACE,
   draftId: null,
   ctx: null,
   cssW: 0,
@@ -82,14 +84,25 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function formatDuration(seconds) {
-  const total = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  if (hours > 0) return minutes > 0 ? `${hours} 小時 ${minutes} 分` : `${hours} 小時`;
-  if (minutes > 0) return secs > 0 ? `${minutes} 分 ${secs} 秒` : `${minutes} 分鐘`;
-  return `${secs} 秒`;
+const PACE_HINT = {
+  "romantic-slow": "像真正的國際信件。同城約一天，國內兩三天，鄰近區域約四五天到一週，跨洲要一到兩週。",
+  "playable-fast": "測試用。同一封信可以在一分鐘內看完寄出、在路上、拆信。",
+};
+
+function rememberPace(pace) {
+  try {
+    sessionStorage.setItem("on-the-way-pace", pace);
+  } catch {
+    /* private mode */
+  }
+}
+
+function recallPace() {
+  try {
+    return sessionStorage.getItem("on-the-way-pace");
+  } catch {
+    return null;
+  }
 }
 
 function formatDistance(km) {
@@ -305,7 +318,9 @@ function renderHomeList(letters) {
           ? legProgressLine(legs[index] || legs[0], { index, count: legs.length })
           : (MODE_LABEL[letter.mode] || "");
         const mode = story ? `${esc(story)} · ` : "";
-        detail = `${mode}剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatDuration(letter.etaSeconds))}後抵達`;
+        const when = formatArrival(letter.arrivesAt);
+        const due = when ? ` · 預計 ${esc(when)}` : "";
+        detail = `${mode}剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatCountdown(letter.etaSeconds))}${due}`;
         extra = `<span class="mini-track"><span style="width:${Math.round(letter.progress * 100)}%"></span></span>`;
       } else if (letter.status === "delivered") {
         detail = "已抵達 · 拆信";
@@ -346,15 +361,16 @@ async function refreshHome() {
 
 function buildPresets() {
   const root = $("preset-list");
+  root.replaceChildren();
   for (const preset of ["tpe-khh", "tpe-tyo", "tpe-101"].map(findPreset)) {
     const from = findPlace(preset.from);
     const to = findPlace(preset.to);
-    const plan = planCourier({ from, to, pace: "playable-fast" });
+    const plan = planCourier({ from, to, pace: state.pace });
     const modes = plan.legs.map((leg) => MODE_LABEL[leg.mode]).join(" → ");
     const button = document.createElement("button");
     button.type = "button";
     button.className = "preset";
-    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(modes)} · ${esc(formatDistance(plan.distanceKm))}</small></span><span class="preset-time">約 ${esc(formatDuration(plan.durationSeconds))}</span>`;
+    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(modes)} · ${esc(formatDistance(plan.distanceKm))}</small></span><span class="preset-time">約 ${esc(formatSpan(plan.durationSeconds))}</span>`;
     button.addEventListener("click", () => navigate(`#/compose?preset=${preset.id}`));
     root.append(button);
   }
@@ -450,7 +466,12 @@ function updateEstimate() {
   }
   const plan = planCourier({ from, to, pace: state.pace });
   box.className = "estimate";
-  box.innerHTML = `<strong>${esc(formatDistance(plan.distanceKm))}</strong><span>約 ${esc(formatDuration(plan.durationSeconds))}</span><span class="via">${esc(legVia(plan.legs))}</span>`;
+  box.innerHTML = `<strong>${esc(formatDistance(plan.distanceKm))}</strong><span>約 ${esc(formatSpan(plan.durationSeconds))}</span><span class="via">${esc(legVia(plan.legs))}</span>`;
+}
+
+function routeUrl(fromId, toId) {
+  const query = new URLSearchParams({ fromId, toId, pace: state.pace });
+  return `/api/route?${query}`;
 }
 
 function applyComposeMode() {
@@ -468,12 +489,17 @@ function applyComposeMode() {
   updateEstimate();
 }
 
-function setPace(pace) {
+function setPace(pace, { remember = false } = {}) {
+  if (!PACES[pace]) return;
   state.pace = pace;
+  if (remember) rememberPace(pace);
   $("pace-fast").setAttribute("aria-pressed", pace === "playable-fast" ? "true" : "false");
   $("pace-slow").setAttribute("aria-pressed", pace === "romantic-slow" ? "true" : "false");
-  $("pace-hint").hidden = pace !== "romantic-slow";
+  const hint = $("pace-hint");
+  hint.hidden = false;
+  hint.textContent = PACE_HINT[pace];
   updateEstimate();
+  buildPresets();
 }
 
 function fillPaper() {
@@ -626,7 +652,6 @@ async function openCompose(params, token) {
   state.draftId = null;
   state.recipient = null;
   state.mode = "preset";
-  state.pace = "playable-fast";
   const preset = findPreset(params.get("preset") || "");
   const recipient = findRecipient(params.get("to") || "");
   if (recipient) {
@@ -653,7 +678,7 @@ async function openCompose(params, token) {
     state.draftId = letter.id;
     state.fromId = letter.from.id;
     state.toId = letter.to.id;
-    state.pace = letter.pace || "playable-fast";
+    if (PACES[letter.pace]) state.pace = letter.pace;
     const drafted = findRecipient(letter.to.id);
     if (drafted) {
       state.mode = "recipient";
@@ -998,6 +1023,7 @@ function renderFlightHud(letter, progress, etaSeconds, loc) {
     $("flight-mode").style.color = "";
     renderLegend("flight-legend", legs, legs.length - 1);
     setText("flight-eta", "已抵達");
+    $("flight-countdown").hidden = true;
     setText("flight-remain", pinLabel(letter.to));
     $("btn-open").hidden = false;
     $("flight-track").hidden = true;
@@ -1007,8 +1033,9 @@ function renderFlightHud(letter, progress, etaSeconds, loc) {
     setText("flight-mode", legProgressLine(leg, { index, count: legs.length }));
     $("flight-mode").style.color = "";
     renderLegend("flight-legend", legs, index);
-    const secs = Math.ceil(etaSeconds);
-    setText("flight-eta", secs <= 1 ? "即將抵達" : `${formatDuration(secs)}後抵達`);
+    $("flight-countdown").hidden = false;
+    setText("flight-eta", formatArrival(letter.arrivesAt));
+    setText("flight-countdown", formatCountdown(etaSeconds));
     const remain = loc ? loc.remainingKm : letter.remainingKm;
     setText("flight-remain", `剩餘 ${formatDistance(remain)}`);
     $("btn-open").hidden = true;
@@ -1294,7 +1321,7 @@ function fillAftertaste(letter) {
     ? `${km}，${sequence}一段，沒有轉運。`
     : `${km}，中途轉了${countWord(transfers)}次：${sequence}。`;
   $("read-after").innerHTML =
-    `<p class="after-warm">這封信在路上 <b>${esc(formatDuration(seconds))}</b>。</p>` +
+    `<p class="after-warm">這封信在路上 <b>${esc(formatSpan(seconds))}</b>。</p>` +
     `<p>${esc(detail)}</p>`;
 }
 
@@ -1334,7 +1361,7 @@ function presentDraw(quote) {
   const legs = letterLegs(quote);
   setText("draw-name", quote.to.name);
   setText("draw-where", whereLine(quote.to));
-  setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatDuration(quote.durationSeconds)}`);
+  setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatSpan(quote.durationSeconds)}`);
   setText("draw-via", legVia(legs));
   renderLegend("draw-legend", legs, -1);
   paintSenderChips();
@@ -1352,7 +1379,7 @@ function presentDraw(quote) {
 async function changeDrawSender(cityId) {
   if (!state.recipient || cityId === state.fromId) return;
   try {
-    const quote = await api(`/api/route?fromId=${encodeURIComponent(cityId)}&toId=${encodeURIComponent(state.recipient.id)}`);
+    const quote = await api(routeUrl(cityId, state.recipient.id));
     const next = `#/draw?id=${encodeURIComponent(quote.to.id)}&from=${encodeURIComponent(quote.from.id)}`;
     if (location.hash !== next) history.replaceState(null, "", next);
     presentDraw(quote);
@@ -1365,7 +1392,7 @@ async function changeDrawSender(cityId) {
 async function showDraw(params, token) {
   const fromId = params.get("from") || "taipei";
   if (!params.get("id")) {
-    const payload = { fromId };
+    const payload = { fromId, pace: state.pace };
     if (params.get("exclude")) payload.excludeId = params.get("exclude");
     const draw = await api("/api/recipients/draw", {
       method: "POST",
@@ -1376,7 +1403,7 @@ async function showDraw(params, token) {
     if (location.hash !== next) location.replace(next);
     return;
   }
-  const quote = await api(`/api/route?fromId=${encodeURIComponent(fromId)}&toId=${encodeURIComponent(params.get("id"))}`);
+  const quote = await api(routeUrl(fromId, params.get("id")));
   if (token !== renderToken) return;
   await loadActivity().catch(() => {});
   if (token !== renderToken) return;
@@ -1387,7 +1414,7 @@ async function showDraw(params, token) {
 async function redrawRecipient() {
   const excludeId = state.recipient?.id;
   const fromId = state.fromId || "taipei";
-  const payload = { fromId };
+  const payload = { fromId, pace: state.pace };
   if (excludeId) payload.excludeId = excludeId;
   const draw = await api("/api/recipients/draw", {
     method: "POST",
@@ -1432,7 +1459,7 @@ async function render() {
   }
 }
 
-function boot() {
+async function boot() {
   buildPlaceChips();
   buildPresets();
   bindCanvas();
@@ -1466,13 +1493,35 @@ function boot() {
     event.target.value = "";
     drawUpload(file);
   });
-  $("pace-fast").addEventListener("click", () => setPace("playable-fast"));
-  $("pace-slow").addEventListener("click", () => setPace("romantic-slow"));
+  $("pace-fast").addEventListener("click", () => setPace("playable-fast", { remember: true }));
+  $("pace-slow").addEventListener("click", () => setPace("romantic-slow", { remember: true }));
   window.addEventListener("hashchange", () => {
     render().catch((err) => showToast(err.message));
   });
+  await loadDefaultPace();
   if (!location.hash) location.replace("#/");
   else render().catch((err) => showToast(err.message));
+}
+
+async function loadDefaultPace() {
+  const fromQuery = new URLSearchParams(location.search).get("pace");
+  const fromHash = parseHash().params.get("pace");
+  const requested = PACES[fromQuery] ? fromQuery : (PACES[fromHash] ? fromHash : null);
+  if (requested) {
+    setPace(requested, { remember: true });
+    return;
+  }
+  const saved = recallPace();
+  if (PACES[saved]) {
+    setPace(saved);
+    return;
+  }
+  try {
+    const health = await api("/api/health");
+    setPace(PACES[health.pace] ? health.pace : DEFAULT_PACE);
+  } catch {
+    setPace(DEFAULT_PACE);
+  }
 }
 
 boot();

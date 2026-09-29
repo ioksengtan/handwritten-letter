@@ -4,10 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "./lib/store.js";
-import { describeFlight, haversineKm } from "./shared/flight.js";
+import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/flight.js";
 import { PLACES, PRESETS, findPlace } from "./shared/places.js";
 import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
-import { backgroundSnapshots, planCourier } from "./shared/route.js";
+import { backgroundPlans, backgroundSnapshots, planCourier } from "./shared/route.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const MIN_DISTANCE_KM = 0.05;
@@ -50,6 +50,7 @@ function destinationFromId(id) {
       city: recipient.city,
       cityId: recipient.cityId,
       country: recipient.country,
+      continent: recipient.continent,
       lat: recipient.lat,
       lng: recipient.lng,
     };
@@ -57,7 +58,14 @@ function destinationFromId(id) {
   return senderFromId(id);
 }
 
-function buildGeometry(fromId, toId, pace) {
+export function resolveDefaultPace(explicit = process.env.PACE) {
+  if (explicit == null || explicit === "") return DEFAULT_PACE;
+  if (PACES[explicit]) return explicit;
+  console.warn(`不認識的 PACE=${explicit}，改用浪漫慢`);
+  return DEFAULT_PACE;
+}
+
+function buildGeometry(fromId, toId, pace, fallback = DEFAULT_PACE) {
   const from = senderFromId(fromId);
   const to = destinationFromId(toId);
   if (!from || !to) return { error: "找不到地點" };
@@ -66,7 +74,7 @@ function buildGeometry(fromId, toId, pace) {
   if (distanceKm < MIN_DISTANCE_KM) return { error: "請選擇不同的寄出地與收件地" };
   let plan;
   try {
-    plan = planCourier({ from, to, pace: pace || "playable-fast" });
+    plan = planCourier({ from, to, pace: pace || fallback });
   } catch {
     return { error: "不認識的飛行節奏" };
   }
@@ -126,7 +134,9 @@ export function createApp({
   dataDir = path.join(root, "data"),
   now = () => Date.now(),
   random = Math.random,
+  defaultPace,
 } = {}) {
+  const paceFallback = resolveDefaultPace(defaultPace);
   const store = createStore(dataDir);
   const app = express();
   app.disable("x-powered-by");
@@ -183,7 +193,7 @@ export function createApp({
   }
 
   app.get("/api/health", (req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, pace: paceFallback });
   });
 
   app.get("/api/places", (req, res) => {
@@ -199,7 +209,7 @@ export function createApp({
   });
 
   app.get("/api/route", (req, res) => {
-    const geo = buildGeometry(req.query.fromId, req.query.toId, req.query.pace || "playable-fast");
+    const geo = buildGeometry(req.query.fromId, req.query.toId, req.query.pace, paceFallback);
     if (geo.error) return res.status(400).json({ error: geo.error });
     res.json(toRoute(geo));
   });
@@ -213,7 +223,7 @@ export function createApp({
       excludeIds: [body.excludeId, ...recentRecipientIds(1)],
       random,
     });
-    const geo = buildGeometry(from.id, recipient.id, body.pace || "playable-fast");
+    const geo = buildGeometry(from.id, recipient.id, body.pace, paceFallback);
     if (geo.error) return res.status(400).json({ error: geo.error });
     res.json(toRoute(geo));
   });
@@ -222,7 +232,7 @@ export function createApp({
     const nowMs = now();
     const letters = persistArrivals(nowMs);
     const trips = [
-      ...backgroundSnapshots(nowMs),
+      ...backgroundSnapshots(nowMs, backgroundPlans(paceFallback)),
       ...letters.filter((letter) => letter.status === "in_flight").map((letter) => ({
         id: letter.id,
         kind: "yours",
@@ -272,7 +282,7 @@ export function createApp({
 
   app.post("/api/letters", (req, res) => {
     const body = req.body || {};
-    const geo = buildGeometry(body.fromId, body.toId, body.pace);
+    const geo = buildGeometry(body.fromId, body.toId, body.pace, paceFallback);
     if (geo.error) return res.status(400).json({ error: geo.error });
     const id = randomUUID();
     const image = applyImage(id, body.imageDataUrl);
@@ -321,6 +331,7 @@ export function createApp({
       body.fromId || existing.from.id,
       body.toId || existing.to.id,
       body.pace || existing.pace,
+      paceFallback,
     );
     if (geo.error) return res.status(400).json({ error: geo.error });
     let imageFile = existing.imageFile;
@@ -354,6 +365,7 @@ export function createApp({
       body.fromId || existing.from.id,
       body.toId || existing.to.id,
       body.pace || existing.pace,
+      paceFallback,
     );
     if (geo.error) return res.status(400).json({ error: geo.error });
     let imageFile = existing.imageFile;

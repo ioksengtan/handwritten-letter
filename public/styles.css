@@ -381,7 +381,7 @@ button:focus-visible {
 
 .leaflet-bottom { bottom: 148px; }
 
-.view-flight .leaflet-bottom { bottom: 230px; }
+.view-flight .leaflet-bottom { bottom: 286px; }
 
 .leaflet-control-zoom {
   display: none;
@@ -461,14 +461,15 @@ button:focus-visible {
 
 .view-flight .eta {
   margin-top: 10px;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 500;
   letter-spacing: 0.04em;
+  line-height: 1.35;
   color: #2c241e;
   font-variant-numeric: normal;
 }
 
-.view-flight .sheet:not(.is-arrived) .eta::before {
+#flight-sheet:not(.is-arrived) #flight-eta::before {
   content: "預計";
   display: block;
   margin-bottom: 2px;
@@ -476,6 +477,15 @@ button:focus-visible {
   font-weight: 500;
   letter-spacing: 0.34em;
   color: #7a342e;
+}
+
+.view-flight .countdown {
+  margin: 6px 0 2px;
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: #6e342e;
 }
 
 .view-flight .remain {

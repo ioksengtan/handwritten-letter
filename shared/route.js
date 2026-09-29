@@ -1,4 +1,4 @@
-import { flightDurationSeconds, haversineKm } from "./flight.js";
+import { DEFAULT_PACE, flightDurationSeconds, haversineKm } from "./flight.js";
 import { findRecipient } from "./recipients.js";
 
 /**
@@ -9,10 +9,12 @@ import { findRecipient } from "./recipients.js";
  * - longer domestic, or any international hop: road to the nearest
  *   major airport, plane to the destination airport, road to the door
  *
- * Total seconds still come from the playable-fast (or romantic-slow)
- * formula on the direct great-circle distance. Short legs keep a
- * minimum slice of that time so a mode change is visible; the long
- * leg takes the rest.
+ * Total seconds come from the pace formula on the direct great-circle
+ * distance. Romantic-slow (the default) then gives road and train legs
+ * six times the weight of a plane leg, so sorting and transfer dwell
+ * at the hubs outlasts the flight. Playable-fast still gives the long
+ * leg most of the short demo, with a minimum slice on the others so a
+ * mode change is visible.
  */
 
 export const SHORT_KM = 80;
@@ -152,11 +154,41 @@ function assignDurations(legs, totalSeconds) {
   legs[primary].durationSeconds = total - used;
 }
 
-export function planCourier({ from, to, pace = "playable-fast" }) {
+/**
+ * Postal dwell. Road and train (collection, sorting, the last mile) weigh 6.
+ * A plane leg weighs 1, so the flight is about one thirteenth of a three-leg
+ * trip and shorter than the hub dwell on either side.
+ * Seconds are integers and sum to the total.
+ */
+function assignPostalDurations(legs, totalSeconds) {
+  const total = Math.max(1, Math.round(totalSeconds));
+  if (legs.length === 1) {
+    legs[0].durationSeconds = total;
+    return;
+  }
+  const weights = legs.map((leg) => (leg.mode === "plane" ? 1 : 6));
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  const raw = weights.map((weight) => (total * weight) / weightSum);
+  const shares = raw.map((value) => Math.floor(value));
+  let leftover = total - shares.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, frac: value - shares[index] }))
+    .sort((a, b) => b.frac - a.frac || a.index - b.index);
+  for (const item of order) {
+    if (leftover <= 0) break;
+    shares[item.index] += 1;
+    leftover -= 1;
+  }
+  for (let i = 0; i < legs.length; i += 1) {
+    legs[i].durationSeconds = shares[i];
+  }
+}
+
+export function planCourier({ from, to, pace = DEFAULT_PACE }) {
   const origin = { ...from, name: from.city || from.name };
   const dest = { ...to, name: to.city || to.name };
   const directKm = haversineKm(origin.lat, origin.lng, dest.lat, dest.lng);
-  const durationSeconds = flightDurationSeconds(directKm, pace);
+  const durationSeconds = flightDurationSeconds(directKm, pace, { from: origin, to: dest });
   const sameCountry = Boolean(origin.country && dest.country && origin.country === dest.country);
   let legs;
   if (directKm < SHORT_KM) {
@@ -166,7 +198,8 @@ export function planCourier({ from, to, pace = "playable-fast" }) {
   } else {
     legs = hubSpoke(origin, dest);
   }
-  assignDurations(legs, durationSeconds);
+  if (pace === "romantic-slow") assignPostalDurations(legs, durationSeconds);
+  else assignDurations(legs, durationSeconds);
   return {
     distanceKm: round(directKm, 3),
     durationSeconds,
@@ -214,16 +247,17 @@ export function transferBeat(prev, next) {
   };
 }
 
-let backgroundMemo = null;
+const backgroundMemo = new Map();
 
-export function backgroundPlans() {
-  if (backgroundMemo) return backgroundMemo;
-  backgroundMemo = BACKGROUND_PAIRS.map(([fromId, toId, offset]) => {
+export function backgroundPlans(pace = DEFAULT_PACE) {
+  if (backgroundMemo.has(pace)) return backgroundMemo.get(pace);
+  const plans = BACKGROUND_PAIRS.map(([fromId, toId, offset]) => {
     const from = findRecipient(fromId);
     const to = findRecipient(toId);
     const plan = planCourier({
-      from: { name: from.city, country: from.country, lat: from.lat, lng: from.lng },
-      to: { name: to.city, country: to.country, lat: to.lat, lng: to.lng },
+      from: { name: from.city, country: from.country, continent: from.continent, lat: from.lat, lng: from.lng },
+      to: { name: to.city, country: to.country, continent: to.continent, lat: to.lat, lng: to.lng },
+      pace,
     });
     return {
       id: `bg-${from.cityId}-${to.cityId}`,
@@ -231,7 +265,8 @@ export function backgroundPlans() {
       plan,
     };
   });
-  return backgroundMemo;
+  backgroundMemo.set(pace, plans);
+  return plans;
 }
 
 export function backgroundSnapshots(nowMs, plans = backgroundPlans()) {
