@@ -29,10 +29,6 @@
             <div id="home-map" class="aged-map"></div>
           </div>
           <div id="home-letters"></div>
-          <section class="block">
-            <h2>固定路線</h2>
-            <div id="preset-list"></div>
-          </section>
         </div>
         <div class="dock">
           <button type="button" class="btn primary" id="btn-draw">抽一位隨機收件人</button>
@@ -53,7 +49,7 @@
           <div id="recipient-banner" class="recipient-card" hidden>
             <p class="who" id="recipient-name"></p>
             <p class="where" id="recipient-where"></p>
-            <button type="button" class="text-btn" id="btn-change-recipient">換一位</button>
+            <button type="button" class="text-btn" id="btn-change-recipient" hidden>換一位</button>
           </div>
           <fieldset class="panel" id="sender-panel" hidden>
             <legend>寄出地</legend>
@@ -68,14 +64,6 @@
             <button type="button" id="btn-clear">清除</button>
             <input id="file-input" type="file" accept="image/*" hidden />
           </div>
-          <fieldset class="panel" id="from-panel">
-            <legend>寄出地</legend>
-            <div id="from-chips" class="chips"></div>
-          </fieldset>
-          <fieldset class="panel" id="to-panel">
-            <legend>收件地</legend>
-            <div id="to-chips" class="chips"></div>
-          </fieldset>
           <div class="estimate" id="estimate"></div>
           <div class="pace-row">
             <span>郵寄時間</span>

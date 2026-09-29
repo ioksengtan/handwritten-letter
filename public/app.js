@@ -8,7 +8,7 @@ import {
   samplePath,
   unwrapLongitudes,
 } from "/shared/flight.js";
-import { PLACES, findPlace, findPreset } from "/shared/places.js";
+import { findPlace } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
 import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
 import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
@@ -43,9 +43,10 @@ const MODE_SVG = { road: TRUCK_SVG, train: TRAIN_SVG, plane: PLANE_SVG };
 const state = {
   view: "home",
   fromId: "taipei",
-  toId: "kaohsiung",
+  toId: null,
   recipient: null,
-  mode: "preset",
+  legacyTo: null,
+  mode: "recipient",
   pace: DEFAULT_PACE,
   draftId: null,
   ctx: null,
@@ -298,7 +299,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!letters.length) {
-    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試寄。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，寄到對方住的城市。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -359,36 +360,7 @@ async function refreshHome() {
   ensureHomeMap();
 }
 
-function buildPresets() {
-  const root = $("preset-list");
-  root.replaceChildren();
-  for (const preset of ["tpe-khh", "tpe-tyo", "tpe-101"].map(findPreset)) {
-    const from = findPlace(preset.from);
-    const to = findPlace(preset.to);
-    const plan = planCourier({ from, to, pace: state.pace });
-    const modes = plan.legs.map((leg) => MODE_LABEL[leg.mode]).join(" → ");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "preset";
-    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(modes)} · ${esc(formatDistance(plan.distanceKm))}</small></span><span class="preset-time">約 ${esc(formatSpan(plan.durationSeconds))}</span>`;
-    button.addEventListener("click", () => navigate(`#/compose?preset=${preset.id}`));
-    root.append(button);
-  }
-}
-
-function buildPlaceChips() {
-  for (const [containerId, which] of [["from-chips", "from"], ["to-chips", "to"]]) {
-    const root = $(containerId);
-    for (const place of PLACES) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "chip";
-      button.dataset.id = place.id;
-      button.textContent = place.name;
-      button.addEventListener("click", () => selectPlace(which, place.id));
-      root.append(button);
-    }
-  }
+function buildSenderChips() {
   for (const containerId of ["sender-chips", "draw-senders"]) {
     const root = $(containerId);
     for (const city of CITIES) {
@@ -421,31 +393,15 @@ function selectSender(id) {
   state.fromId = id;
   paintSenderChips();
   updateEstimate();
-  if (state.mode === "recipient" && state.recipient) {
+  if (state.mode === "recipient" && state.recipient && !state.draftId) {
     const next = `#/compose?from=${encodeURIComponent(id)}&to=${encodeURIComponent(state.recipient.id)}`;
     if (location.hash !== next) history.replaceState(null, "", next);
   }
 }
 
-function paintChips() {
-  for (const button of $("from-chips").querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", button.dataset.id === state.fromId ? "true" : "false");
-  }
-  for (const button of $("to-chips").querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", button.dataset.id === state.toId ? "true" : "false");
-  }
-}
-
-function selectPlace(which, id) {
-  if (which === "from") state.fromId = id;
-  else state.toId = id;
-  paintChips();
-  updateEstimate();
-}
-
 function currentEndpoints() {
   const from = senderById(state.fromId);
-  const to = state.recipient || findPlace(state.toId);
+  const to = state.recipient || state.legacyTo;
   return { from, to };
 }
 
@@ -459,6 +415,11 @@ function sameEndpoint(from, to) {
 function updateEstimate() {
   const box = $("estimate");
   const { from, to } = currentEndpoints();
+  if (!from || !to) {
+    box.className = "estimate";
+    box.textContent = "";
+    return;
+  }
   if (sameEndpoint(from, to)) {
     box.className = "estimate warn";
     box.textContent = "請選擇不同的寄出地與收件地";
@@ -476,16 +437,24 @@ function routeUrl(fromId, toId) {
 
 function applyComposeMode() {
   const recipientMode = state.mode === "recipient" && state.recipient;
-  $("recipient-banner").hidden = !recipientMode;
-  $("sender-panel").hidden = !recipientMode;
-  $("from-panel").hidden = Boolean(recipientMode);
-  $("to-panel").hidden = Boolean(recipientMode);
+  const legacyMode = state.mode === "legacy" && state.legacyTo;
+  const addressed = recipientMode || legacyMode;
+  $("recipient-banner").hidden = !addressed;
+  $("sender-panel").hidden = !addressed;
+  $("btn-change-recipient").hidden = !recipientMode;
   if (recipientMode) {
     $("recipient-name").textContent = state.recipient.name;
     $("recipient-where").textContent = whereLine(state.recipient);
-    paintSenderChips();
+  } else if (legacyMode) {
+    const place = state.legacyTo;
+    $("recipient-name").textContent = place.city && place.name !== place.city
+      ? `${place.name} · ${place.city}`
+      : place.name;
+    $("recipient-where").textContent = place.country && place.country !== place.name
+      ? place.country
+      : "";
   }
-  paintChips();
+  if (addressed) paintSenderChips();
   updateEstimate();
 }
 
@@ -499,7 +468,6 @@ function setPace(pace, { remember = false } = {}) {
   hint.hidden = false;
   hint.textContent = PACE_HINT[pace];
   updateEstimate();
-  buildPresets();
 }
 
 function fillPaper() {
@@ -651,22 +619,20 @@ async function openCompose(params, token) {
   setupCanvas();
   state.draftId = null;
   state.recipient = null;
-  state.mode = "preset";
-  const preset = findPreset(params.get("preset") || "");
+  state.legacyTo = null;
+  state.mode = "recipient";
   const recipient = findRecipient(params.get("to") || "");
+  const draftId = params.get("draft");
+  if (!recipient && !draftId) {
+    navigate("#/draw");
+    return;
+  }
   if (recipient) {
     state.mode = "recipient";
     state.recipient = recipient;
     state.toId = recipient.id;
     state.fromId = params.get("from") || "taipei";
-  } else if (preset) {
-    state.fromId = preset.from;
-    state.toId = preset.to;
-  } else if (!params.get("draft")) {
-    state.fromId = "taipei";
-    state.toId = "kaohsiung";
   }
-  const draftId = params.get("draft");
   if (draftId) {
     const letter = await api(`/api/letters/${draftId}`);
     if (token !== renderToken) return;
@@ -683,9 +649,11 @@ async function openCompose(params, token) {
     if (drafted) {
       state.mode = "recipient";
       state.recipient = drafted;
+      state.legacyTo = null;
     } else {
-      state.mode = "preset";
+      state.mode = "legacy";
       state.recipient = null;
+      state.legacyTo = letter.to;
     }
     if (letter.imageUrl) {
       const img = await loadImage(letter.imageUrl);
@@ -1460,8 +1428,7 @@ async function render() {
 }
 
 async function boot() {
-  buildPlaceChips();
-  buildPresets();
+  buildSenderChips();
   bindCanvas();
   $("btn-draw").addEventListener("click", () => navigate("#/draw"));
   $("btn-redraw").addEventListener("click", () => {

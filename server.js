@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "./lib/store.js";
 import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/flight.js";
-import { PLACES, PRESETS, findPlace } from "./shared/places.js";
+import { findPlace } from "./shared/places.js";
 import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
 import { backgroundPlans, backgroundSnapshots, planCourier } from "./shared/route.js";
 
@@ -194,14 +194,6 @@ export function createApp({
 
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, pace: paceFallback });
-  });
-
-  app.get("/api/places", (req, res) => {
-    res.json(PLACES);
-  });
-
-  app.get("/api/presets", (req, res) => {
-    res.json(PRESETS);
   });
 
   app.get("/api/recipients", (req, res) => {

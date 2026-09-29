@@ -60,16 +60,11 @@ test("health check is public", async () => {
   assert.equal(health.body.pace, "romantic-slow");
 });
 
-test("places and presets are available", async () => {
-  const places = await send(`${base}/api/places`);
-  const presets = await send(`${base}/api/presets`);
-  assert.equal(places.status, 200);
-  assert.ok(places.body.some((place) => place.id === "taipei"));
-  assert.ok(places.body.some((place) => place.id === "kaohsiung"));
-  assert.ok(places.body.some((place) => place.id === "tokyo"));
-  assert.equal(presets.status, 200);
-  assert.ok(presets.body.some((preset) => preset.id === "tpe-khh"));
-  assert.ok(presets.body.some((preset) => preset.id === "tpe-tyo"));
+test("fixed-route catalogs are gone", async () => {
+  const places = await fetch(`${base}/api/places`);
+  const presets = await fetch(`${base}/api/presets`);
+  assert.equal(places.status, 404);
+  assert.equal(presets.status, 404);
 });
 
 test("rejects a missing letter face and the same place twice", async () => {
@@ -388,6 +383,63 @@ test("a fast server default keeps an unnamed route playable", async () => {
   } finally {
     await new Promise((resolve, reject) => {
       fastServer.close((err) => (err ? reject(err) : resolve()));
+    });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a letter already stored with landmark endpoints still renders and arrives", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "letters-old-"));
+  const store = createStore(dir);
+  const from = findPlace("taipei");
+  const to = findPlace("kaohsiung");
+  const departedAt = "2026-09-24T00:00:00.000Z";
+  const arrivesAt = "2026-09-26T11:00:00.000Z";
+  store.create({
+    id: "old-fixed-route",
+    status: "in_flight",
+    from,
+    to,
+    distanceKm: haversineKm(from.lat, from.lng, to.lat, to.lng),
+    durationSeconds: 2 * 86400 + 11 * 3600,
+    pace: "romantic-slow",
+    legs: null,
+    imageFile: null,
+    createdAt: departedAt,
+    updatedAt: departedAt,
+    departedAt,
+    arrivesAt,
+    deliveredAt: null,
+  });
+  let nowMs = Date.parse("2026-09-25T05:30:00.000Z");
+  const app = createApp({ dataDir: dir, now: () => nowMs });
+  const oldServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => oldServer.once("listening", resolve));
+  try {
+    const root = `http://127.0.0.1:${oldServer.address().port}`;
+    const flyingRes = await fetch(`${root}/api/letters/old-fixed-route`);
+    const flying = await flyingRes.json();
+    assert.equal(flyingRes.status, 200);
+    assert.equal(flying.status, "in_flight");
+    assert.equal(flying.from.name, "台北");
+    assert.equal(flying.to.name, "高雄");
+    assert.ok(flying.progress > 0.2 && flying.progress < 0.8, flying.progress);
+    assert.ok(flying.remainingKm > 0);
+    assert.equal(flying.imageUrl, null);
+
+    const listed = await (await fetch(`${root}/api/letters`)).json();
+    assert.ok(listed.some((letter) => letter.id === "old-fixed-route" && letter.status === "in_flight"));
+
+    nowMs = Date.parse(arrivesAt) + 1000;
+    const arrived = await (await fetch(`${root}/api/letters/old-fixed-route`)).json();
+    assert.equal(arrived.status, "delivered");
+    assert.equal(arrived.progress, 1);
+    assert.equal(arrived.remainingKm, 0);
+    assert.equal(arrived.to.name, "高雄");
+    assert.equal(arrived.deliveredAt, arrivesAt);
+  } finally {
+    await new Promise((resolve, reject) => {
+      oldServer.close((err) => (err ? reject(err) : resolve()));
     });
     await rm(dir, { recursive: true, force: true });
   }

@@ -100,9 +100,6 @@ button:focus-visible {
   padding: 0;
 }
 
-.block { padding: 0 16px; }
-
-.block h2,
 .group h2 {
   margin: 18px 0 8px;
   font-size: 13px;
@@ -116,8 +113,7 @@ button:focus-visible {
   line-height: 1.6;
 }
 
-.card,
-.preset {
+.card {
   width: 100%;
   display: flex;
   justify-content: space-between;
@@ -132,22 +128,19 @@ button:focus-visible {
   box-shadow: var(--shadow);
 }
 
-.card b,
-.preset b {
+.card b {
   display: block;
   font-weight: 600;
   font-size: 16px;
 }
 
-.card small,
-.preset small {
+.card small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
 }
 
-.preset-time,
 .card-side {
   color: var(--accent);
   font-size: 13px;
@@ -251,8 +244,6 @@ button:focus-visible {
   font-size: 13px;
   color: var(--muted);
 }
-
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .chip-scroller {
   display: flex;
