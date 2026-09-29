@@ -3,9 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { createApp } from "../server.js";
+import { createStore } from "../lib/store.js";
+import { createApp, resolveDefaultPace } from "../server.js";
 import { flightDurationSeconds, haversineKm } from "../shared/flight.js";
 import { findPlace } from "../shared/places.js";
+import { planCourier } from "../shared/route.js";
 
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -55,6 +57,7 @@ test("health check is public", async () => {
   const health = await send(`${base}/api/health`);
   assert.equal(health.status, 200);
   assert.equal(health.body.ok, true);
+  assert.equal(health.body.pace, "romantic-slow");
 });
 
 test("places and presets are available", async () => {
@@ -189,7 +192,7 @@ test("draft can be saved and thrown later", async () => {
   });
   assert.equal(sent.status, 200);
   assert.equal(sent.body.status, "in_flight");
-  assert.equal(sent.body.pace, "playable-fast");
+  assert.equal(sent.body.pace, "romantic-slow");
   const sentTwice = await send(`${base}/api/letters/${another.body.id}/send`, {
     method: "POST",
     body: JSON.stringify({}),
@@ -232,9 +235,14 @@ test("random draw avoids the sender city and the last recipient", async () => {
   });
   assert.equal(drawn.status, 200);
   assert.notEqual(drawn.body.to.cityId, "taipei");
+  assert.equal(drawn.body.pace, "romantic-slow");
   assert.equal(
     drawn.body.durationSeconds,
-    flightDurationSeconds(drawn.body.distanceKm, "playable-fast"),
+    planCourier({
+      from: drawn.body.from,
+      to: drawn.body.to,
+      pace: "romantic-slow",
+    }).durationSeconds,
   );
 
   const other = await send(`${base}/api/recipients/draw`, {
@@ -266,13 +274,25 @@ test("random draw avoids the sender city and the last recipient", async () => {
   const nyc = await send(`${base}/api/route?fromId=taipei&toId=noah`);
   assert.equal(nyc.status, 200);
   assert.equal(nyc.body.to.city, "紐約");
+  assert.equal(nyc.body.pace, "romantic-slow");
   assert.ok(nyc.body.distanceKm > 10000);
-  assert.equal(nyc.body.durationSeconds, 18 * 60);
+  assert.ok(nyc.body.durationSeconds >= 7 * 86400);
+  assert.ok(nyc.body.durationSeconds <= 14 * 86400);
   assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
   assert.equal(
     nyc.body.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
     nyc.body.durationSeconds,
   );
+  assert.ok(nyc.body.legs[1].durationSeconds < nyc.body.legs[0].durationSeconds);
+
+  const london = await send(`${base}/api/route?fromId=taipei&toId=ellen`);
+  assert.ok(london.body.durationSeconds >= 8 * 86400);
+  assert.ok(london.body.durationSeconds <= 10 * 86400);
+
+  const fast = await send(`${base}/api/route?fromId=taipei&toId=noah&pace=playable-fast`);
+  assert.equal(fast.body.pace, "playable-fast");
+  assert.equal(fast.body.durationSeconds, 18 * 60);
+  assert.ok(fast.body.legs[1].durationSeconds > fast.body.legs[0].durationSeconds);
 });
 
 test("activity counts real flights plus background trips", async () => {
@@ -305,10 +325,70 @@ test("activity counts real flights plus background trips", async () => {
   assert.ok(after.body.trips.some((trip) => trip.id === created.body.id && trip.kind === "yours"));
 
   const roadSeconds = created.body.legs[0].durationSeconds;
-  nowMs += (roadSeconds + 2) * 1000;
+  const planeSeconds = created.body.legs[1].durationSeconds;
+  nowMs += (roadSeconds + planeSeconds * 0.15) * 1000;
   const flying = await send(`${base}/api/letters/${created.body.id}`);
   assert.equal(flying.body.mode, "plane");
   assert.equal(flying.body.legIndex, 1);
   assert.ok(haversineKm(flying.body.position.lat, flying.body.position.lng, 25.047924, 121.517081) > 30);
 });
+
+test("a multi-day letter is still on disk after the store is reopened", async () => {
+  const created = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "ellen",
+      launch: true,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.pace, "romantic-slow");
+  assert.ok(created.body.durationSeconds >= 8 * 86400);
+  assert.ok(created.body.durationSeconds <= 10 * 86400);
+
+  const reopened = createStore(dataDir);
+  const stored = reopened.get(created.body.id);
+  assert.equal(stored.status, "in_flight");
+  assert.equal(stored.arrivesAt, created.body.arrivesAt);
+  assert.equal(stored.durationSeconds, created.body.durationSeconds);
+});
+});
+
+test("PACE selects the server default, and an unknown value falls back", () => {
+  const previous = process.env.PACE;
+  process.env.PACE = "playable-fast";
+  assert.equal(resolveDefaultPace(), "playable-fast");
+  process.env.PACE = "nope";
+  assert.equal(resolveDefaultPace(), "romantic-slow");
+  process.env.PACE = "";
+  assert.equal(resolveDefaultPace(), "romantic-slow");
+  if (previous == null) delete process.env.PACE;
+  else process.env.PACE = previous;
+});
+
+test("a fast server default keeps an unnamed route playable", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "letters-fast-"));
+  const app = createApp({
+    dataDir: dir,
+    defaultPace: "playable-fast",
+    now: () => Date.parse("2026-09-24T00:00:00.000Z"),
+  });
+  const fastServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => fastServer.once("listening", resolve));
+  try {
+    const root = `http://127.0.0.1:${fastServer.address().port}`;
+    const health = await fetch(`${root}/api/health`);
+    assert.equal((await health.json()).pace, "playable-fast");
+    const route = await fetch(`${root}/api/route?fromId=taipei&toId=noah`);
+    const body = await route.json();
+    assert.equal(body.durationSeconds, flightDurationSeconds(body.distanceKm, "playable-fast"));
+    assert.equal(body.durationSeconds, 18 * 60);
+  } finally {
+    await new Promise((resolve, reject) => {
+      fastServer.close((err) => (err ? reject(err) : resolve()));
+    });
+    await rm(dir, { recursive: true, force: true });
+  }
 });

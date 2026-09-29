@@ -21,12 +21,19 @@ test("playable-fast pacing bands", () => {
   assert.ok(flightDurationSeconds(12000, "playable-fast") <= 20 * 60);
 });
 
-test("romantic-slow is the reserved slower pace", () => {
-  assert.equal(flightDurationSeconds(12000, "romantic-slow"), 5400);
-  assert.ok(
-    flightDurationSeconds(300, "romantic-slow") >
-      flightDurationSeconds(300, "playable-fast"),
-  );
+test("romantic-slow counts postal days from distance alone", () => {
+  const day = 24 * 60 * 60;
+  const city = flightDurationSeconds(5, "romantic-slow");
+  const domestic = flightDurationSeconds(300, "romantic-slow");
+  const region = flightDurationSeconds(2100, "romantic-slow");
+  const london = flightDurationSeconds(9781, "romantic-slow");
+  const nyc = flightDurationSeconds(12525, "romantic-slow");
+  assert.ok(city >= day && city <= 1.25 * day, city);
+  assert.ok(domestic >= 2 * day && domestic <= 3 * day, domestic);
+  assert.ok(region >= 4 * day && region <= 6 * day, region);
+  assert.ok(london >= 8 * day && london <= 10 * day, london);
+  assert.ok(nyc > london && nyc <= 14 * day, nyc);
+  assert.ok(domestic > flightDurationSeconds(300, "playable-fast"));
 });
 
 test("unknown pace is rejected", () => {
