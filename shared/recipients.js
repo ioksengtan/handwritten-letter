@@ -32,6 +32,7 @@ export const CITIES = RECIPIENTS.map((recipient) => ({
   id: recipient.cityId,
   name: recipient.city,
   country: recipient.country,
+  continent: recipient.continent,
   lat: recipient.lat,
   lng: recipient.lng,
 }));

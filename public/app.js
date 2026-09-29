@@ -10,6 +10,12 @@ import {
 } from "/shared/flight.js";
 import { findPlace } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
+import {
+  SENDER_PROFILE_KEY,
+  resolveOriginId,
+  serializeSenderProfile,
+} from "/shared/profile.js";
+import { POST_IRREVOCABLE } from "/shared/slip.js";
 import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
 import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
@@ -42,7 +48,13 @@ const MODE_SVG = { road: TRUCK_SVG, train: TRAIN_SVG, plane: PLANE_SVG };
 
 const state = {
   view: "home",
-  fromId: "taipei",
+  fromId: null,
+  originId: null,
+  regionDraft: null,
+  regionMode: "register",
+  regionMap: null,
+  regionMarkers: new Map(),
+  afterRegion: null,
   toId: null,
   recipient: null,
   legacyTo: null,
@@ -104,6 +116,48 @@ function recallPace() {
   } catch {
     return null;
   }
+}
+
+const REGISTER_LEDE = "第一次來，請先選定你的地區。之後每封信都從這裡寄出，像信封上的回郵地址。這台瀏覽器會記住。還沒有帳號；以後若有帳號，這份地區會跟著帳號走。";
+const SETTINGS_LEDE = "這是以後每封信的寄出地，不是這一封信的選項。已經寄出的信不會改。以後若有帳號，這份地區會跟著帳號走。";
+
+function readOriginId() {
+  try {
+    return resolveOriginId(localStorage.getItem(SENDER_PROFILE_KEY), (id) => findCity(id));
+  } catch {
+    return null;
+  }
+}
+
+function writeOriginId(id) {
+  try {
+    localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(id));
+  } catch {
+    /* private mode */
+  }
+  state.originId = id;
+  state.fromId = id;
+  paintRegionLink();
+}
+
+function originLabel(point) {
+  if (!point) return "";
+  const place = point.city || point.name;
+  if (point.country && point.country !== place) return `${place} · ${point.country}`;
+  return place;
+}
+
+function paintRegionLink() {
+  const button = $("btn-region");
+  const city = findCity(state.originId);
+  if (!button) return;
+  if (!city) {
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  button.textContent = `地區 · ${city.name}`;
+  button.setAttribute("aria-label", `我的地區，目前是${city.name}。這不是寄信時的選項。`);
 }
 
 function formatDistance(km) {
@@ -169,7 +223,7 @@ function navigate(hash) {
 
 function showOnly(name) {
   state.view = name;
-  for (const id of ["home", "compose", "draw", "flight", "read"]) {
+  for (const id of ["home", "region", "compose", "draw", "flight", "read"]) {
     $(`view-${id}`).hidden = id !== name;
   }
 }
@@ -360,47 +414,165 @@ async function refreshHome() {
   ensureHomeMap();
 }
 
-function buildSenderChips() {
-  for (const containerId of ["sender-chips", "draw-senders"]) {
-    const root = $(containerId);
-    for (const city of CITIES) {
+const CONTINENTS = ["亞洲", "歐洲", "非洲", "美洲", "大洋洲"];
+
+function buildRegionList() {
+  const root = $("region-list");
+  root.replaceChildren();
+  for (const continent of CONTINENTS) {
+    const cities = CITIES.filter((city) => city.continent === continent);
+    if (!cities.length) continue;
+    const section = document.createElement("section");
+    section.className = "region-group";
+    const heading = document.createElement("h2");
+    heading.textContent = continent;
+    const row = document.createElement("div");
+    row.className = "region-cities";
+    for (const city of cities) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "chip";
       button.dataset.id = city.id;
       button.textContent = city.name;
-      button.addEventListener("click", () => {
-        if (containerId === "draw-senders") changeDrawSender(city.id);
-        else selectSender(city.id);
-      });
-      root.append(button);
+      button.addEventListener("click", () => selectRegionCity(city.id));
+      row.append(button);
     }
+    section.append(heading, row);
+    root.append(section);
   }
 }
 
-function paintSenderChips() {
-  for (const containerId of ["sender-chips", "draw-senders"]) {
-    const root = $(containerId);
-    for (const button of root.querySelectorAll("button")) {
-      const selected = button.dataset.id === state.fromId;
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-      if (selected) button.scrollIntoView({ inline: "center", block: "nearest" });
-    }
+function paintRegionChoices() {
+  const city = findCity(state.regionDraft);
+  setText(
+    "region-picked",
+    city ? `${city.name} · ${city.country}` : "在地圖上點一個城市，或從下面的名單選。",
+  );
+  $("btn-region-save").disabled = !city;
+  for (const button of $("region-list").querySelectorAll("button")) {
+    const selected = button.dataset.id === state.regionDraft;
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+    if (selected) button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  for (const [id, marker] of state.regionMarkers) {
+    const el = marker.getElement();
+    if (el) el.classList.toggle("is-picked", id === state.regionDraft);
   }
 }
 
-function selectSender(id) {
-  state.fromId = id;
-  paintSenderChips();
-  updateEstimate();
-  if (state.mode === "recipient" && state.recipient && !state.draftId) {
-    const next = `#/compose?from=${encodeURIComponent(id)}&to=${encodeURIComponent(state.recipient.id)}`;
-    if (location.hash !== next) history.replaceState(null, "", next);
+function selectRegionCity(id, { fly = true } = {}) {
+  if (!findCity(id)) return;
+  state.regionDraft = id;
+  paintRegionChoices();
+  const city = findCity(id);
+  if (fly && state.regionMap && city) {
+    state.regionMap.flyTo([city.lat, city.lng], 4, { duration: 0.6 });
   }
+}
+
+function nearestCity(lat, lng) {
+  let best = CITIES[0];
+  let bestKm = Infinity;
+  for (const city of CITIES) {
+    const km = haversineKm(lat, lng, city.lat, city.lng);
+    if (km < bestKm) {
+      bestKm = km;
+      best = city;
+    }
+  }
+  return best;
+}
+
+function ensureRegionMap() {
+  const container = $("region-map");
+  if (state.regionMap) {
+    requestAnimationFrame(() => state.regionMap.invalidateSize());
+    paintRegionChoices();
+    return;
+  }
+  const map = L.map(container, {
+    zoomControl: false,
+    attributionControl: true,
+    worldCopyJump: true,
+  });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  map.setView([18, 20], 1);
+  for (const city of CITIES) {
+    const marker = L.marker([city.lat, city.lng], {
+      icon: L.divIcon({
+        className: "region-pin",
+        html: "<span></span>",
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      }),
+      keyboard: false,
+    }).addTo(map);
+    marker.on("click", () => selectRegionCity(city.id));
+    state.regionMarkers.set(city.id, marker);
+  }
+  map.on("click", (event) => {
+    const city = nearestCity(event.latlng.lat, event.latlng.lng);
+    if (city) selectRegionCity(city.id);
+  });
+  state.regionMap = map;
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    paintRegionChoices();
+  });
+}
+
+function showRegion(mode) {
+  state.regionMode = mode;
+  showOnly("region");
+  $("region-back").hidden = mode !== "settings";
+  $("region-lede").textContent = mode === "settings" ? SETTINGS_LEDE : REGISTER_LEDE;
+  $("btn-region-save").textContent = mode === "settings" ? "儲存地區" : "設為我的地區";
+  if (mode === "settings") state.regionDraft = state.originId;
+  else if (!findCity(state.regionDraft)) state.regionDraft = null;
+  ensureRegionMap();
+  paintRegionChoices();
+}
+
+function saveRegion() {
+  const city = findCity(state.regionDraft);
+  if (!city) return;
+  const next = state.regionMode === "register" ? (state.afterRegion || "#/") : "#/";
+  state.afterRegion = null;
+  writeOriginId(city.id);
+  navigate(next === location.hash ? "#/" : next);
+}
+
+function closePostSlip() {
+  const slip = $("post-slip");
+  if (slip) slip.hidden = true;
+}
+
+function openPostSlip() {
+  const { from, to } = currentEndpoints();
+  if (!from || !to || sameEndpoint(from, to)) {
+    showToast("請選擇不同的寄出地與收件地");
+    return;
+  }
+  if (!canvasHasInk()) {
+    showToast("請先寫下或上傳信面");
+    return;
+  }
+  const plan = planCourier({ from, to, pace: state.pace });
+  const arrivesAt = new Date(nowMs() + plan.durationSeconds * 1000).toISOString();
+  setText("slip-warning", POST_IRREVOCABLE);
+  setText("slip-who", to.name || to.city);
+  setText("slip-where", whereLine(to));
+  setText("slip-from", originLabel(from));
+  setText("slip-when", formatArrival(arrivesAt));
+  setText("slip-span", `路上約 ${formatSpan(plan.durationSeconds)}`);
+  $("post-slip").hidden = false;
 }
 
 function currentEndpoints() {
-  const from = senderById(state.fromId);
+  const from = senderById(state.originId);
   const to = state.recipient || state.legacyTo;
   return { from, to };
 }
@@ -440,8 +612,9 @@ function applyComposeMode() {
   const legacyMode = state.mode === "legacy" && state.legacyTo;
   const addressed = recipientMode || legacyMode;
   $("recipient-banner").hidden = !addressed;
-  $("sender-panel").hidden = !addressed;
   $("btn-change-recipient").hidden = !recipientMode;
+  const origin = senderById(state.originId);
+  setText("compose-origin", origin ? `回郵地址 · ${originLabel(origin)}` : "");
   if (recipientMode) {
     $("recipient-name").textContent = state.recipient.name;
     $("recipient-where").textContent = whereLine(state.recipient);
@@ -454,7 +627,6 @@ function applyComposeMode() {
       ? place.country
       : "";
   }
-  if (addressed) paintSenderChips();
   updateEstimate();
 }
 
@@ -631,7 +803,7 @@ async function openCompose(params, token) {
     state.mode = "recipient";
     state.recipient = recipient;
     state.toId = recipient.id;
-    state.fromId = params.get("from") || "taipei";
+    state.fromId = state.originId;
   }
   if (draftId) {
     const letter = await api(`/api/letters/${draftId}`);
@@ -642,7 +814,7 @@ async function openCompose(params, token) {
       return;
     }
     state.draftId = letter.id;
-    state.fromId = letter.from.id;
+    state.fromId = state.originId;
     state.toId = letter.to.id;
     if (PACES[letter.pace]) state.pace = letter.pace;
     const drafted = findRecipient(letter.to.id);
@@ -678,6 +850,7 @@ async function submitLetter(launch) {
   state.submitting = true;
   $("btn-send").disabled = true;
   $("btn-save").disabled = true;
+  $("btn-slip-confirm").disabled = true;
   try {
     const body = {
       fromId: from.id,
@@ -703,6 +876,7 @@ async function submitLetter(launch) {
         body: JSON.stringify(body),
       });
     }
+    closePostSlip();
     if (launch) playPost(letter.id, body.imageDataUrl);
     else navigate("#/");
   } catch (err) {
@@ -711,6 +885,7 @@ async function submitLetter(launch) {
     state.submitting = false;
     $("btn-send").disabled = false;
     $("btn-save").disabled = false;
+    $("btn-slip-confirm").disabled = false;
   }
 }
 
@@ -982,6 +1157,7 @@ function setCourier(mode, position, bearing) {
 
 function renderFlightHud(letter, progress, etaSeconds, loc) {
   setText("flight-route", routeLine(letter.from, letter.to));
+  setText("flight-origin", `回郵地址 · ${originLabel(letter.from)}`);
   const legs = state.flight?.legs || letterLegs(letter);
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
@@ -1250,7 +1426,8 @@ async function showRead(id, token) {
   const dest = letter.to.city || letter.to.name;
   const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
   $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
-  $("postmark-place").textContent = dest;
+  $("postmark-place").textContent = letter.from.name;
+  $("envelope-return").textContent = `寄自 ${originLabel(letter.from)}`;
   $("postmark-time").textContent = formatPostalDate(arrivedAt);
   fillAftertaste(letter);
   let started = false;
@@ -1331,8 +1508,8 @@ function presentDraw(quote) {
   setText("draw-where", whereLine(quote.to));
   setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatSpan(quote.durationSeconds)}`);
   setText("draw-via", legVia(legs));
+  setText("draw-origin", `寄自 ${originLabel(quote.from)}`);
   renderLegend("draw-legend", legs, -1);
-  paintSenderChips();
   $("btn-write").disabled = quote.to.cityId === quote.from.id;
   clearMap();
   const view = mountRouteMap($("draw-map"), quote.from, quote.to, {
@@ -1344,21 +1521,8 @@ function presentDraw(quote) {
   state.map = view.map;
 }
 
-async function changeDrawSender(cityId) {
-  if (!state.recipient || cityId === state.fromId) return;
-  try {
-    const quote = await api(routeUrl(cityId, state.recipient.id));
-    const next = `#/draw?id=${encodeURIComponent(quote.to.id)}&from=${encodeURIComponent(quote.from.id)}`;
-    if (location.hash !== next) history.replaceState(null, "", next);
-    presentDraw(quote);
-  } catch (err) {
-    showToast(err.message);
-    paintSenderChips();
-  }
-}
-
 async function showDraw(params, token) {
-  const fromId = params.get("from") || "taipei";
+  const fromId = state.originId;
   if (!params.get("id")) {
     const payload = { fromId, pace: state.pace };
     if (params.get("exclude")) payload.excludeId = params.get("exclude");
@@ -1367,7 +1531,7 @@ async function showDraw(params, token) {
       body: JSON.stringify(payload),
     });
     if (token !== renderToken) return;
-    const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+    const next = `#/draw?id=${encodeURIComponent(draw.to.id)}`;
     if (location.hash !== next) location.replace(next);
     return;
   }
@@ -1381,14 +1545,14 @@ async function showDraw(params, token) {
 
 async function redrawRecipient() {
   const excludeId = state.recipient?.id;
-  const fromId = state.fromId || "taipei";
+  const fromId = state.originId;
   const payload = { fromId, pace: state.pace };
   if (excludeId) payload.excludeId = excludeId;
   const draw = await api("/api/recipients/draw", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+  const next = `#/draw?id=${encodeURIComponent(draw.to.id)}`;
   if (location.hash === next) presentDraw(draw);
   else location.replace(next);
 }
@@ -1398,8 +1562,18 @@ async function render() {
   const { parts, params } = parseHash();
   const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
   if (!keepPost) cancelPost();
+  closePostSlip();
   stopLoops();
   try {
+    if (!state.originId) {
+      if (parts[0] !== "region") state.afterRegion = location.hash || "#/";
+      showRegion("register");
+      return;
+    }
+    if (parts[0] === "region") {
+      showRegion("settings");
+      return;
+    }
     if (parts[0] === "compose") {
       await openCompose(params, token);
     } else if (parts[0] === "draw") {
@@ -1428,19 +1602,27 @@ async function render() {
 }
 
 async function boot() {
-  buildSenderChips();
+  buildRegionList();
   bindCanvas();
+  state.originId = readOriginId();
+  state.fromId = state.originId;
+  paintRegionLink();
+  $("btn-region").addEventListener("click", () => navigate("#/region"));
+  $("region-back").addEventListener("click", () => navigate("#/"));
+  $("btn-region-save").addEventListener("click", saveRegion);
+  $("btn-slip-back").addEventListener("click", closePostSlip);
+  $("btn-slip-confirm").addEventListener("click", () => submitLetter(true));
   $("btn-draw").addEventListener("click", () => navigate("#/draw"));
   $("btn-redraw").addEventListener("click", () => {
     redrawRecipient().catch((err) => showToast(err.message));
   });
   $("btn-write").addEventListener("click", () => {
     if (!state.recipient) return;
-    navigate(`#/compose?from=${encodeURIComponent(state.fromId)}&to=${encodeURIComponent(state.recipient.id)}`);
+    navigate(`#/compose?to=${encodeURIComponent(state.recipient.id)}`);
   });
   $("btn-change-recipient").addEventListener("click", () => {
     if (!state.recipient) return;
-    navigate(`#/draw?from=${encodeURIComponent(state.fromId)}&exclude=${encodeURIComponent(state.recipient.id)}`);
+    navigate(`#/draw?exclude=${encodeURIComponent(state.recipient.id)}`);
   });
   $("compose-back").addEventListener("click", () => navigate("#/"));
   $("draw-back").addEventListener("click", () => navigate("#/"));
@@ -1450,7 +1632,7 @@ async function boot() {
     state.ceremonySkip = true;
     settleCeremony();
   });
-  $("btn-send").addEventListener("click", () => submitLetter(true));
+  $("btn-send").addEventListener("click", () => openPostSlip());
   $("btn-save").addEventListener("click", () => submitLetter(false));
   $("btn-undo").addEventListener("click", undoStroke);
   $("btn-clear").addEventListener("click", clearCanvas);
