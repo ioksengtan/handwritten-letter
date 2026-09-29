@@ -99,6 +99,7 @@ test("launch schedules a flight the client can resume by time", async () => {
       toId: "taipei101",
       pace: "playable-fast",
       launch: true,
+      senderId: "suite-sender-01",
       imageDataUrl: PNG,
     }),
   });
@@ -159,7 +160,7 @@ test("draft can be saved and thrown later", async () => {
 
   const thrown = await send(`${base}/api/letters/${draft.body.id}/throw`, {
     method: "POST",
-    body: JSON.stringify({ pace: "playable-fast" }),
+    body: JSON.stringify({ pace: "playable-fast", senderId: "suite-sender-02" }),
   });
   assert.equal(thrown.status, 200);
   assert.equal(thrown.body.status, "in_flight");
@@ -183,7 +184,7 @@ test("draft can be saved and thrown later", async () => {
   });
   const sent = await send(`${base}/api/letters/${another.body.id}/send`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ senderId: "suite-sender-02" }),
   });
   assert.equal(sent.status, 200);
   assert.equal(sent.body.status, "in_flight");
@@ -203,6 +204,7 @@ test("romantic-slow stretches the same route", async () => {
       toId: "kaohsiung",
       pace: "playable-fast",
       launch: true,
+      senderId: "suite-sender-03",
       imageDataUrl: PNG,
     }),
   });
@@ -213,6 +215,7 @@ test("romantic-slow stretches the same route", async () => {
       toId: "kaohsiung",
       pace: "romantic-slow",
       launch: true,
+      senderId: "suite-sender-04",
       imageDataUrl: PNG,
     }),
   });
@@ -252,6 +255,7 @@ test("random draw avoids the sender city and the last recipient", async () => {
       fromId: "taipei",
       toId: drawn.body.to.id,
       launch: true,
+      senderId: "suite-sender-05",
       imageDataUrl: PNG,
     }),
   });
@@ -306,6 +310,7 @@ test("activity counts real flights plus background trips", async () => {
       fromId: "taipei",
       toId: "jiahui",
       launch: true,
+      senderId: "suite-sender-06",
       imageDataUrl: PNG,
     }),
   });
@@ -333,6 +338,7 @@ test("a multi-day letter is still on disk after the store is reopened", async ()
       fromId: "taipei",
       toId: "ellen",
       launch: true,
+      senderId: "suite-sender-07",
       imageDataUrl: PNG,
     }),
   });
@@ -346,6 +352,127 @@ test("a multi-day letter is still on disk after the store is reopened", async ()
   assert.equal(stored.status, "in_flight");
   assert.equal(stored.arrivesAt, created.body.arrivesAt);
   assert.equal(stored.durationSeconds, created.body.durationSeconds);
+  assert.equal(stored.senderId, "suite-sender-07");
+});
+
+test("five letters in flight is the limit for one sender, at either pace", async () => {
+  const store = createStore(dataDir);
+  const from = findPlace("taipei");
+  const to = findPlace("kaohsiung");
+  store.create({
+    id: "old-without-sender",
+    status: "in_flight",
+    from,
+    to,
+    distanceKm: 296,
+    durationSeconds: 3 * 86400,
+    pace: "romantic-slow",
+    legs: null,
+    imageFile: null,
+    createdAt: "2026-09-24T00:00:00.000Z",
+    updatedAt: "2026-09-24T00:00:00.000Z",
+    departedAt: "2026-09-24T00:00:00.000Z",
+    arrivesAt: "2026-10-20T00:00:00.000Z",
+    deliveredAt: null,
+  });
+
+  const sender = "quota-sender-01";
+  const other = "quota-sender-02";
+  const targets = ["noah", "ellen", "owen", "amina", "camille"];
+  const paces = ["playable-fast", "playable-fast", "romantic-slow", "playable-fast", "playable-fast"];
+  const mailed = [];
+  for (let i = 0; i < targets.length; i += 1) {
+    const created = await send(`${base}/api/letters`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromId: "taipei",
+        toId: targets[i],
+        pace: paces[i],
+        launch: true,
+        senderId: sender,
+        imageDataUrl: PNG,
+      }),
+    });
+    assert.equal(created.status, 201, created.body?.error);
+    assert.equal(created.body.senderId, sender);
+    mailed.push(created.body);
+  }
+
+  const blocked = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "jonas",
+      pace: "romantic-slow",
+      launch: true,
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /五封/);
+  assert.match(blocked.body.error, /送到/);
+  assert.equal(blocked.body.limit, 5);
+  assert.equal(blocked.body.inFlight, 5);
+  const soonest = mailed.map((letter) => Date.parse(letter.arrivesAt)).sort((a, b) => a - b)[0];
+  assert.equal(Date.parse(blocked.body.soonestArrivesAt), soonest);
+
+  const elsewhere = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "tokyo",
+      toId: "noah",
+      pace: "playable-fast",
+      launch: true,
+      senderId: other,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(elsewhere.status, 201);
+
+  const draft = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "mina",
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(draft.status, 201);
+  assert.equal(draft.body.status, "draft");
+  const draftSend = await send(`${base}/api/letters/${draft.body.id}/send`, {
+    method: "POST",
+    body: JSON.stringify({ senderId: sender, pace: "playable-fast" }),
+  });
+  assert.equal(draftSend.status, 409);
+
+  const bare = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "sari",
+      launch: true,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(bare.status, 400);
+  assert.match(bare.body.error, /寄件人編號/);
+
+  nowMs = soonest + 1000;
+  const again = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "giulia",
+      pace: "playable-fast",
+      launch: true,
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(again.status, 201, again.body?.error);
+  assert.equal(again.body.status, "in_flight");
 });
 });
 

@@ -12,9 +12,11 @@ import { findPlace } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
 import {
   SENDER_PROFILE_KEY,
-  resolveOriginId,
+  normalizeSenderId,
+  parseSenderProfile,
   serializeSenderProfile,
 } from "/shared/profile.js";
+import { quotaSnapshot, quotaWaitMessage, remainingLabel } from "/shared/quota.js";
 import { POST_IRREVOCABLE } from "/shared/slip.js";
 import { planCourier } from "/shared/route.js";
 import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
@@ -57,6 +59,9 @@ const state = {
   view: "home",
   fromId: null,
   originId: null,
+  senderId: null,
+  letters: [],
+  quota: null,
   regionDraft: null,
   regionMode: "register",
   regionMap: null,
@@ -128,21 +133,36 @@ function recallPace() {
 const REGISTER_LEDE = "第一次來，請先選定你的地區。之後每封信都從這裡寄出，像信封上的回郵地址。這台瀏覽器會記住。還沒有帳號；以後若有帳號，這份地區會跟著帳號走。";
 const SETTINGS_LEDE = "這是以後每封信的寄出地，不是這一封信的選項。已經寄出的信不會改。以後若有帳號，這份地區會跟著帳號走。";
 
-function readOriginId() {
+function readSenderProfile() {
+  let raw = null;
   try {
-    return resolveOriginId(localStorage.getItem(SENDER_PROFILE_KEY), (id) => findCity(id));
+    raw = localStorage.getItem(SENDER_PROFILE_KEY);
   } catch {
     return null;
   }
+  const profile = parseSenderProfile(raw);
+  if (!profile || !findCity(profile.originId)) return null;
+  let senderId = profile.senderId;
+  if (!senderId) {
+    senderId = normalizeSenderId(crypto.randomUUID());
+    try {
+      localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(profile.originId, senderId));
+    } catch {
+      /* private mode */
+    }
+  }
+  return { originId: profile.originId, senderId };
 }
 
 function writeOriginId(id) {
+  const senderId = state.senderId || normalizeSenderId(crypto.randomUUID());
   try {
-    localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(id));
+    localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(id, senderId));
   } catch {
     /* private mode */
   }
   state.originId = id;
+  state.senderId = senderId;
   state.fromId = id;
   paintRegionLink();
 }
@@ -209,7 +229,11 @@ async function api(url, options = {}) {
       data = null;
     }
   }
-  if (!res.ok) throw new Error(data?.error || "連線失敗");
+  if (!res.ok) {
+    const error = new Error(data?.error || "連線失敗");
+    error.payload = data;
+    throw error;
+  }
   return data;
 }
 
@@ -405,8 +429,38 @@ async function loadActivity() {
   return activity;
 }
 
+function paintMailQuota(letters) {
+  const quota = quotaSnapshot(letters || [], state.senderId);
+  state.quota = quota;
+  const arrival = quota.soonestArrivesAt ? formatArrival(quota.soonestArrivesAt) : "";
+  const wait = quota.full ? quotaWaitMessage(arrival) : "";
+  const slots = Array.from({ length: quota.limit }, (_, index) => {
+    const used = index < quota.inFlight;
+    return `<li class="stamp-slot${used ? " is-used" : ""}">${used ? "<span>郵</span>" : ""}</li>`;
+  }).join("");
+  const html = `<p class="quota-label">${esc(remainingLabel(quota.remaining))}</p><ol class="stamp-slots" aria-hidden="true">${slots}</ol>${wait ? `<p class="quota-wait">${esc(wait)}</p>` : ""}`;
+  for (const id of ["home-quota", "compose-quota"]) {
+    const root = $(id);
+    if (!root) continue;
+    root.classList.toggle("is-full", quota.full);
+    root.innerHTML = html;
+    root.setAttribute("aria-label", wait ? `${remainingLabel(quota.remaining)}。${wait}` : remainingLabel(quota.remaining));
+  }
+  const send = $("btn-send");
+  if (send && !state.submitting) send.disabled = quota.full;
+  const confirm = $("btn-slip-confirm");
+  if (confirm && !state.submitting) confirm.disabled = quota.full;
+}
+
+async function refreshQuota() {
+  const letters = await api("/api/letters");
+  state.letters = letters;
+  paintMailQuota(letters);
+  return letters;
+}
+
 async function refreshHome() {
-  const [letters] = await Promise.all([api("/api/letters"), loadActivity()]);
+  const [letters] = await Promise.all([refreshQuota(), loadActivity()]);
   if (state.view !== "home") return;
   renderHomeList(letters);
   ensureHomeMap();
@@ -548,7 +602,17 @@ function closePostSlip() {
   if (slip) slip.hidden = true;
 }
 
-function openPostSlip() {
+async function openPostSlip() {
+  try {
+    await refreshQuota();
+  } catch {
+    /* keep the last snapshot */
+  }
+  if (state.quota?.full) {
+    const arrival = state.quota.soonestArrivesAt ? formatArrival(state.quota.soonestArrivesAt) : "";
+    showToast(quotaWaitMessage(arrival));
+    return;
+  }
   const { from, to } = currentEndpoints();
   if (!from || !to || sameEndpoint(from, to)) {
     showToast("請選擇不同的寄出地與收件地");
@@ -832,6 +896,8 @@ async function openCompose(params, token) {
   }
   applyComposeMode();
   setPace(state.pace);
+  await refreshQuota();
+  if (token !== renderToken) return;
 }
 
 async function submitLetter(launch) {
@@ -854,6 +920,7 @@ async function submitLetter(launch) {
       fromId: from.id,
       toId: state.recipient ? state.recipient.id : to.id,
       pace: state.pace,
+      senderId: state.senderId,
       imageDataUrl: $("letter-canvas").toDataURL("image/jpeg", 0.86),
       launch,
     };
@@ -878,12 +945,16 @@ async function submitLetter(launch) {
     if (launch) playPost(letter.id, body.imageDataUrl);
     else navigate("#/");
   } catch (err) {
-    showToast(err.message);
+    const arrival = err.payload?.soonestArrivesAt ? formatArrival(err.payload.soonestArrivesAt) : "";
+    showToast(arrival ? quotaWaitMessage(arrival) : err.message);
   } finally {
     state.submitting = false;
-    $("btn-send").disabled = false;
     $("btn-save").disabled = false;
-    $("btn-slip-confirm").disabled = false;
+    if (state.letters.length) paintMailQuota(state.letters);
+    else {
+      $("btn-send").disabled = false;
+      $("btn-slip-confirm").disabled = false;
+    }
   }
 }
 
@@ -1458,7 +1529,9 @@ async function render() {
 async function boot() {
   buildRegionList();
   bindCanvas();
-  state.originId = readOriginId();
+  const profile = readSenderProfile();
+  state.originId = profile?.originId || null;
+  state.senderId = profile?.senderId || null;
   state.fromId = state.originId;
   paintRegionLink();
   $("btn-region").addEventListener("click", () => navigate("#/region"));
