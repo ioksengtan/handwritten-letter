@@ -8,7 +8,7 @@ import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/fligh
 import { findPlace } from "./shared/places.js";
 import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
 import { normalizeSenderId } from "./shared/profile.js";
-import { QUOTA_FULL_ERROR, quotaSnapshot } from "./shared/quota.js";
+import { quotaFullError, quotaSnapshot } from "./shared/quota.js";
 import { backgroundPlans, backgroundSnapshots, planCourier } from "./shared/route.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -273,7 +273,7 @@ export function createApp({
     const quota = quotaSnapshot(letters, id.senderId);
     if (!quota.full) return { senderId: id.senderId };
     return {
-      error: QUOTA_FULL_ERROR,
+      error: quotaFullError(quota.limit),
       status: 409,
       limit: quota.limit,
       inFlight: quota.inFlight,

@@ -438,13 +438,15 @@ function paintMailQuota(letters) {
     const used = index < quota.inFlight;
     return `<li class="stamp-slot${used ? " is-used" : ""}">${used ? "<span>郵</span>" : ""}</li>`;
   }).join("");
-  const html = `<p class="quota-label">${esc(remainingLabel(quota.remaining))}</p><ol class="stamp-slots" aria-hidden="true">${slots}</ol>${wait ? `<p class="quota-wait">${esc(wait)}</p>` : ""}`;
+  const next = quota.nextNote ? `<p class="quota-next">${esc(quota.nextNote)}</p>` : "";
+  const html = `<p class="quota-label">${esc(remainingLabel(quota.remaining))}</p><ol class="stamp-slots" aria-hidden="true">${slots}</ol>${next}${wait ? `<p class="quota-wait">${esc(wait)}</p>` : ""}`;
+  const spoken = [remainingLabel(quota.remaining), quota.nextNote, wait].filter(Boolean).join("。");
   for (const id of ["home-quota", "compose-quota"]) {
     const root = $(id);
     if (!root) continue;
     root.classList.toggle("is-full", quota.full);
     root.innerHTML = html;
-    root.setAttribute("aria-label", wait ? `${remainingLabel(quota.remaining)}。${wait}` : remainingLabel(quota.remaining));
+    root.setAttribute("aria-label", spoken);
   }
   const send = $("btn-send");
   if (send && !state.submitting) send.disabled = quota.full;

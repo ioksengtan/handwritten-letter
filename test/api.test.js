@@ -410,7 +410,7 @@ test("five letters in flight is the limit for one sender, at either pace", async
     }),
   });
   assert.equal(blocked.status, 409);
-  assert.match(blocked.body.error, /五封/);
+  assert.match(blocked.body.error, /5 封/);
   assert.match(blocked.body.error, /送到/);
   assert.equal(blocked.body.limit, 5);
   assert.equal(blocked.body.inFlight, 5);
@@ -473,6 +473,85 @@ test("five letters in flight is the limit for one sender, at either pace", async
   });
   assert.equal(again.status, 201, again.body?.error);
   assert.equal(again.body.status, "in_flight");
+});
+
+test("delivered letters raise the slot count, and fifty is the cap of ten", async () => {
+  const store = createStore(dataDir);
+  const from = findPlace("taipei");
+  const to = findPlace("tokyo");
+  function stored(id, senderId, status) {
+    store.create({
+      id,
+      status,
+      senderId,
+      from,
+      to,
+      distanceKm: 2107,
+      durationSeconds: 5 * 86400,
+      pace: "romantic-slow",
+      legs: null,
+      imageFile: null,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-06T00:00:00.000Z",
+      departedAt: "2026-09-01T00:00:00.000Z",
+      arrivesAt: status === "in_flight" ? "2026-12-01T00:00:00.000Z" : "2026-09-06T00:00:00.000Z",
+      deliveredAt: status === "delivered" ? "2026-09-06T00:00:00.000Z" : null,
+    });
+  }
+  const grow = "quota-grow-01";
+  for (let i = 0; i < 5; i += 1) stored(`grown-delivered-${i}`, grow, "delivered");
+  stored("other-delivered", "quota-grow-02", "delivered");
+  stored("unsigned-delivered", null, "delivered");
+
+  const targets = ["noah", "ellen", "owen", "amina", "camille", "jonas"];
+  for (const toId of targets) {
+    const created = await send(`${base}/api/letters`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromId: "taipei",
+        toId,
+        pace: "playable-fast",
+        launch: true,
+        senderId: grow,
+        imageDataUrl: PNG,
+      }),
+    });
+    assert.equal(created.status, 201, created.body?.error);
+  }
+  const seventh = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "mina",
+      pace: "playable-fast",
+      launch: true,
+      senderId: grow,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(seventh.status, 409);
+  assert.equal(seventh.body.limit, 6);
+  assert.equal(seventh.body.inFlight, 6);
+  assert.match(seventh.body.error, /6 封/);
+
+  const capped = "quota-cap-01";
+  for (let i = 0; i < 50; i += 1) stored(`cap-delivered-${i}`, capped, "delivered");
+  for (let i = 0; i < 10; i += 1) stored(`cap-flying-${i}`, capped, "in_flight");
+  const eleventh = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "sari",
+      pace: "playable-fast",
+      launch: true,
+      senderId: capped,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(eleventh.status, 409);
+  assert.equal(eleventh.body.limit, 10);
+  assert.equal(eleventh.body.inFlight, 10);
+  assert.match(eleventh.body.error, /10 封/);
 });
 });
 
