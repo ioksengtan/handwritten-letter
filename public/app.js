@@ -17,7 +17,23 @@ import {
   serializeSenderProfile,
 } from "/shared/profile.js";
 import { quotaSnapshot, quotaWaitMessage, remainingLabel } from "/shared/quota.js";
-import { POST_IRREVOCABLE } from "/shared/slip.js";
+import { formatSlipArrival, formatZonedDay, POST_IRREVOCABLE } from "/shared/slip.js";
+import {
+  DRAFT_DISCARD_CONFIRM,
+  DRAFT_DROP_IMAGE_NOTE,
+  DRAFT_RESUME_PROMPT,
+  DRAFT_SHRINK_NOTE,
+  DRAFT_STORE_UNAVAILABLE,
+  draftImageDecision,
+} from "/shared/draft.js";
+import {
+  PASSPORT_EMPTY,
+  collectPassport,
+  planStops,
+  postmarkSvg,
+  revealStops,
+  stopTimeMs,
+} from "/shared/marks.js";
 import { planCourier } from "/shared/route.js";
 import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
@@ -91,6 +107,12 @@ const state = {
   postTimers: [],
   ceremonyTimer: 0,
   ceremonySkip: false,
+  backLetter: null,
+  backProgress: 0,
+  localDraft: null,
+  discardingDraft: false,
+  draftTimer: 0,
+  draftNote: "",
 };
 
 let renderToken = 0;
@@ -254,7 +276,7 @@ function navigate(hash) {
 
 function showOnly(name) {
   state.view = name;
-  for (const id of ["home", "region", "compose", "draw", "flight", "read"]) {
+  for (const id of ["home", "region", "compose", "draw", "flight", "read", "passport"]) {
     $(`view-${id}`).hidden = id !== name;
   }
 }
@@ -466,6 +488,230 @@ async function refreshHome() {
   if (state.view !== "home") return;
   renderHomeList(letters);
   ensureHomeMap();
+  paintDraftBanner(await readLocalDraft());
+}
+
+const DRAFT_DB = "on-the-way";
+const DRAFT_STORE = "compose-draft";
+const DRAFT_KEY = "current";
+
+function openDraftDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("no-db"));
+      return;
+    }
+    const request = indexedDB.open(DRAFT_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(DRAFT_STORE)) {
+        request.result.createObjectStore(DRAFT_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("no-db"));
+  });
+}
+
+function readLocalDraft() {
+  return openDraftDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, "readonly");
+    const request = tx.objectStore(DRAFT_STORE).get(DRAFT_KEY);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  })).catch(() => null);
+}
+
+function writeLocalDraft(record) {
+  return openDraftDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, "readwrite");
+    const request = tx.objectStore(DRAFT_STORE).put(record, DRAFT_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || request.error);
+    tx.onabort = () => reject(tx.error || request.error || new Error("abort"));
+  }));
+}
+
+function clearLocalDraft() {
+  state.localDraft = null;
+  state.discardingDraft = false;
+  return openDraftDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE, "readwrite");
+    tx.objectStore(DRAFT_STORE).delete(DRAFT_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("abort"));
+  })).catch(() => {});
+}
+
+function canvasBlob(quality) {
+  const canvas = $("letter-canvas");
+  return new Promise((resolve) => {
+    if (!canvas?.toBlob) {
+      resolve(null);
+      return;
+    }
+    canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+  });
+}
+
+function noteDraft(key, message) {
+  if (state.draftNote === key) return;
+  state.draftNote = key;
+  showToast(message);
+}
+
+async function persistLocalDraft({ fromEdit = false, quality = 0.86, attempt = 0 } = {}) {
+  if (state.submitting || state.view !== "compose") return;
+  if (!state.recipient || !state.ctx) return;
+  if (!canvasHasInk()) {
+    if (!fromEdit) return;
+    const existing = await readLocalDraft();
+    if (existing?.recipientId === state.recipient.id) await clearLocalDraft();
+    return;
+  }
+  const blob = await canvasBlob(quality);
+  if (!blob) return;
+  const decision = draftImageDecision(blob.size, quality);
+  if (decision.action === "shrink") {
+    noteDraft("shrink", DRAFT_SHRINK_NOTE);
+    return persistLocalDraft({ fromEdit, quality: decision.quality, attempt: attempt + 1 });
+  }
+  const record = {
+    version: 1,
+    recipientId: state.recipient.id,
+    pace: state.pace,
+    image: decision.action === "drop-image" ? null : blob,
+    updatedAt: Date.now(),
+  };
+  if (decision.action === "drop-image") noteDraft("drop", DRAFT_DROP_IMAGE_NOTE);
+  try {
+    await writeLocalDraft(record);
+    state.localDraft = record;
+  } catch (err) {
+    const name = err?.name || "";
+    const quota = name === "QuotaExceededError" || name === "UnknownError";
+    if (quota && attempt < 4) {
+      const next = draftImageDecision(Number.MAX_SAFE_INTEGER, quality);
+      if (next.action === "shrink") {
+        noteDraft("shrink", DRAFT_SHRINK_NOTE);
+        return persistLocalDraft({ fromEdit, quality: next.quality, attempt: attempt + 1 });
+      }
+      try {
+        await writeLocalDraft({ ...record, image: null });
+        state.localDraft = { ...record, image: null };
+        noteDraft("drop", DRAFT_DROP_IMAGE_NOTE);
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    noteDraft("fail", DRAFT_STORE_UNAVAILABLE);
+  }
+}
+
+function scheduleLocalDraft() {
+  clearTimeout(state.draftTimer);
+  state.draftTimer = setTimeout(() => {
+    persistLocalDraft({ fromEdit: true }).catch(() => {});
+  }, 250);
+}
+
+async function restoreLocalDraft() {
+  if (!state.recipient) return;
+  const draft = await readLocalDraft();
+  if (!draft || draft.recipientId !== state.recipient.id) return;
+  if (PACES[draft.pace]) state.pace = draft.pace;
+  if (!draft.image) return;
+  const url = URL.createObjectURL(draft.image);
+  try {
+    const img = await loadImage(url);
+    paintContained(img);
+  } catch {
+    /* the blank page stays usable */
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function paintDraftBanner(draft) {
+  const banner = $("draft-banner");
+  if (!banner) return;
+  const person = draft?.recipientId ? findRecipient(draft.recipientId) : null;
+  if (!person) {
+    banner.hidden = true;
+    state.discardingDraft = false;
+    return;
+  }
+  state.localDraft = draft;
+  banner.hidden = false;
+  setText("draft-prompt", DRAFT_RESUME_PROMPT);
+  setText("draft-who", `收件人是${person.name}，${person.city}。`);
+  const confirming = state.discardingDraft;
+  $("draft-ask").hidden = confirming;
+  $("draft-confirm-row").hidden = !confirming;
+  setText("draft-confirm", DRAFT_DISCARD_CONFIRM);
+}
+
+function resumeLocalDraft() {
+  const id = state.localDraft?.recipientId;
+  if (!id) return;
+  state.discardingDraft = false;
+  navigate(`#/compose?to=${encodeURIComponent(id)}`);
+}
+
+function stampDateText(letter, stop) {
+  const ms = stopTimeMs(letter, stop.role === "arrived" ? 1 : stop.t);
+  if (!Number.isFinite(ms)) return "";
+  return formatZonedDay(new Date(ms).toISOString(), stop.timeZone);
+}
+
+function paintEnvelopeBack(letter, progress) {
+  if (!letter?.from || !letter?.to) return;
+  const delivered = letter.status === "delivered" || progress >= 1;
+  const visible = revealStops(planStops(letter.from, letter.to), progress, { delivered });
+  const html = visible.map((stop) => postmarkSvg(stop, { date: stampDateText(letter, stop) })).join("");
+  const root = $("back-stamps");
+  if (root && root.dataset.key !== html) {
+    root.innerHTML = html;
+    root.dataset.key = html;
+  }
+  const from = letter.from.name || letter.from.city || "";
+  const to = letter.to.city || letter.to.name || "";
+  setText("back-route", `${from}寄往${to}`);
+  setText("back-note", delivered
+    ? "這封信已經送到，沿途的戳都蓋上了。"
+    : "飛到哪裡，就蓋到哪裡。還沒飛過的地方先不蓋。");
+}
+
+function openEnvelopeBack() {
+  if (!state.backLetter) return;
+  paintEnvelopeBack(state.backLetter, state.backProgress);
+  $("envelope-back").hidden = false;
+}
+
+function closeEnvelopeBack() {
+  const panel = $("envelope-back");
+  if (panel) panel.hidden = true;
+}
+
+async function showPassport(token) {
+  showOnly("passport");
+  const letters = await api("/api/letters");
+  if (token !== renderToken) return;
+  const stamps = collectPassport(letters, state.senderId, nowMs());
+  const root = $("passport-stamps");
+  if (!stamps.length) {
+    setText("passport-lede", PASSPORT_EMPTY);
+    root.innerHTML = "";
+    return;
+  }
+  setText("passport-lede", "這些國家是這位寄件人的信飛過、或已經送到的地方。第一次經過就留下。");
+  root.innerHTML = stamps.map((stamp) => postmarkSvg({
+    role: "via",
+    city: stamp.city,
+    country: stamp.country,
+    timeZone: stamp.timeZone,
+  }, { date: formatZonedDay(stamp.at, stamp.timeZone) })).join("");
 }
 
 const CONTINENTS = ["亞洲", "歐洲", "非洲", "美洲", "大洋洲"];
@@ -630,7 +876,10 @@ async function openPostSlip() {
   setText("slip-who", to.name || to.city);
   setText("slip-where", whereLine(to));
   setText("slip-from", originLabel(from));
-  setText("slip-when", formatArrival(arrivesAt));
+  const arrival = formatSlipArrival(arrivesAt, to);
+  setText("slip-when", arrival.sentence || formatArrival(arrivesAt));
+  setText("slip-local", arrival.localTime);
+  $("slip-local").hidden = !arrival.localTime;
   setText("slip-span", `路上約 ${formatSpan(plan.durationSeconds)}`);
   $("post-slip").hidden = false;
 }
@@ -807,7 +1056,9 @@ function bindCanvas() {
   });
 
   const end = () => {
+    if (!drawing) return;
     drawing = false;
+    scheduleLocalDraft();
   };
   canvas.addEventListener("pointerup", end);
   canvas.addEventListener("pointercancel", end);
@@ -820,12 +1071,14 @@ function undoStroke() {
   state.ctx.setTransform(1, 0, 0, 1, 0, 0);
   state.ctx.putImageData(prev, 0, 0);
   state.ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+  scheduleLocalDraft();
 }
 
 function clearCanvas() {
   if (!state.ctx) return;
   pushUndo();
   fillPaper();
+  scheduleLocalDraft();
 }
 
 async function drawUpload(file) {
@@ -843,6 +1096,7 @@ async function drawUpload(file) {
     const img = await loadImage(url);
     pushUndo();
     paintContained(img);
+    scheduleLocalDraft();
   } catch (err) {
     showToast(err.message);
   } finally {
@@ -895,6 +1149,8 @@ async function openCompose(params, token) {
       const img = await loadImage(letter.imageUrl);
       paintContained(img);
     }
+  } else {
+    await restoreLocalDraft();
   }
   applyComposeMode();
   setPace(state.pace);
@@ -944,8 +1200,10 @@ async function submitLetter(launch) {
       });
     }
     closePostSlip();
-    if (launch) playPost(letter.id, body.imageDataUrl);
-    else navigate("#/");
+    if (launch) {
+      await clearLocalDraft();
+      playPost(letter.id, body.imageDataUrl);
+    } else navigate("#/");
   } catch (err) {
     const arrival = err.payload?.soonestArrivesAt ? formatArrival(err.payload.soonestArrivesAt) : "";
     showToast(arrival ? quotaWaitMessage(arrival) : err.message);
@@ -1305,6 +1563,9 @@ function flightFrame(token) {
   }
   setPigeon(here, flight.lastBearing);
   renderFlightHud(letter, t);
+  state.backLetter = letter;
+  state.backProgress = t >= 1 || letter.status === "delivered" ? 1 : t;
+  if (!$("envelope-back").hidden) paintEnvelopeBack(letter, state.backProgress);
   paintTraffic();
   if (t >= 1) {
     if (!flight.arrived) {
@@ -1325,6 +1586,8 @@ async function showFlight(id, token, params) {
   }
   syncClock(letter.serverNow);
   const intro = params?.get("intro") === "1" && letter.status !== "delivered";
+  state.backLetter = letter;
+  state.backProgress = letter.status === "delivered" ? 1 : (letter.progress || 0);
   showOnly("flight");
   $("btn-open").onclick = () => navigate(`#/read/${id}`);
   mountFlight(letter, { intro });
@@ -1357,6 +1620,8 @@ async function showRead(id, token) {
     return;
   }
   showOnly("read");
+  state.backLetter = letter;
+  state.backProgress = 1;
   const ceremony = $("ceremony");
   ceremony.classList.remove("is-playing", "is-open");
   state.ceremonySkip = false;
@@ -1490,6 +1755,7 @@ async function render() {
   const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
   if (!keepPost) cancelPost();
   closePostSlip();
+  closeEnvelopeBack();
   stopLoops();
   try {
     if (!state.originId) {
@@ -1509,6 +1775,8 @@ async function render() {
       await showFlight(parts[1], token, params);
     } else if (parts[0] === "read" && parts[1]) {
       await showRead(parts[1], token);
+    } else if (parts[0] === "passport") {
+      await showPassport(token);
     } else {
       showOnly("home");
       await refreshHome();
@@ -1537,6 +1805,23 @@ async function boot() {
   state.fromId = state.originId;
   paintRegionLink();
   $("btn-region").addEventListener("click", () => navigate("#/region"));
+  $("btn-passport").addEventListener("click", () => navigate("#/passport"));
+  $("passport-back").addEventListener("click", () => navigate("#/"));
+  $("btn-envelope-back").addEventListener("click", openEnvelopeBack);
+  $("btn-read-envelope").addEventListener("click", openEnvelopeBack);
+  $("btn-back-close").addEventListener("click", closeEnvelopeBack);
+  $("btn-draft-resume").addEventListener("click", resumeLocalDraft);
+  $("btn-draft-discard").addEventListener("click", () => {
+    state.discardingDraft = true;
+    paintDraftBanner(state.localDraft);
+  });
+  $("btn-draft-no").addEventListener("click", () => {
+    state.discardingDraft = false;
+    paintDraftBanner(state.localDraft);
+  });
+  $("btn-draft-yes").addEventListener("click", () => {
+    clearLocalDraft().then(() => paintDraftBanner(null));
+  });
   $("region-back").addEventListener("click", () => navigate("#/"));
   $("btn-region-save").addEventListener("click", saveRegion);
   $("btn-slip-back").addEventListener("click", closePostSlip);
@@ -1553,7 +1838,9 @@ async function boot() {
     if (!state.recipient) return;
     navigate(`#/draw?exclude=${encodeURIComponent(state.recipient.id)}`);
   });
-  $("compose-back").addEventListener("click", () => navigate("#/"));
+  $("compose-back").addEventListener("click", () => {
+    persistLocalDraft({ fromEdit: true }).finally(() => navigate("#/"));
+  });
   $("draw-back").addEventListener("click", () => navigate("#/"));
   $("flight-back").addEventListener("click", () => navigate("#/"));
   $("read-back").addEventListener("click", () => navigate("#/"));
@@ -1575,6 +1862,9 @@ async function boot() {
   $("pace-slow").addEventListener("click", () => setPace("romantic-slow", { remember: true }));
   window.addEventListener("hashchange", () => {
     render().catch((err) => showToast(err.message));
+  });
+  window.addEventListener("pagehide", () => {
+    persistLocalDraft().catch(() => {});
   });
   await loadDefaultPace();
   if (!location.hash) location.replace("#/");

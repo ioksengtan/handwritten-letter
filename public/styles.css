@@ -88,8 +88,15 @@ button:focus-visible {
   letter-spacing: 0.04em;
 }
 
-.region-link {
+.top-links {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.region-link {
+  margin-left: 0;
   border: none;
   background: transparent;
   color: var(--muted);
@@ -790,10 +797,16 @@ button:focus-visible {
   font-size: 16px;
 }
 
-.slip-span {
+.slip-span,
+.slip-local {
   grid-column: 2;
   color: #6b5346;
   font-size: 14px !important;
+}
+
+.slip-local {
+  color: #2a211c;
+  font-size: 16px !important;
 }
 
 .slip-actions {
@@ -1643,4 +1656,122 @@ button:focus-visible {
   font-size: 14px;
   line-height: 1.45;
   box-shadow: 0 10px 24px rgba(20, 30, 40, 0.2);
+}
+
+.draft-banner {
+  margin: 12px 16px 0;
+  padding: 14px 14px 12px;
+  background-color: var(--stock);
+  background-image: var(--paper-grain);
+  border: 1px solid rgba(122, 52, 46, 0.42);
+  font-family: var(--serif);
+  color: #2a211c;
+}
+
+.draft-banner p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.draft-who {
+  margin-top: 4px !important;
+  color: #6b5346;
+  font-size: 14px;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.draft-actions .btn {
+  flex: 1;
+  height: 42px;
+  border-radius: 2px;
+  border-color: rgba(122, 52, 46, 0.45);
+  background: #f7f1e6;
+  color: var(--stamp);
+  font-family: var(--serif);
+  font-weight: 600;
+}
+
+.back-open {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--oxblood);
+  font-family: var(--serif);
+  letter-spacing: 0.12em;
+  font-size: 15px;
+}
+
+.envelope-back {
+  position: absolute;
+  inset: 0;
+  z-index: 28;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(62, 44, 32, 0.38);
+}
+
+.back-paper {
+  width: 100%;
+  max-height: 92%;
+  overflow: auto;
+  padding: 18px 18px calc(16px + env(safe-area-inset-bottom));
+  background-color: #efe2cc;
+  background-image: var(--paper-grain);
+  color: #2a211c;
+  border-top: 1px solid rgba(110, 52, 46, 0.45);
+  font-family: var(--serif);
+}
+
+.back-paper h2 {
+  margin: 4px 0 6px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.back-route,
+.back-note,
+.passport-lede {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.back-note,
+.passport-lede {
+  color: #6b5346;
+}
+
+.passport-lede {
+  padding: 4px 18px 0;
+}
+
+.stamp-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px 8px;
+  padding: 8px 2px 16px;
+}
+
+#passport-stamps {
+  padding: 8px 16px 28px;
+}
+
+.postmark-svg {
+  display: block;
+  overflow: visible;
+}
+
+.back-paper .btn {
+  width: 100%;
+  border-radius: 2px;
+  border-color: rgba(122, 52, 46, 0.45);
+  background: #f7f1e6;
+  color: var(--stamp);
+  font-family: var(--serif);
 }

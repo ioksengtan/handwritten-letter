@@ -51,7 +51,7 @@ test("only this sender's in-flight letters fill the slots", () => {
   assert.equal(quotaSnapshot(letters, null).delivered, 0);
 });
 
-test("the traveling limit follows each Postcrossing boundary and stops at ten", () => {
+test("each delivered-count boundary sets the slot count and fifty is the cap of ten", () => {
   const table = [
     [0, 5, 5],
     [4, 5, 1],
