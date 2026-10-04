@@ -10,7 +10,7 @@ import {
   samplePath,
   unwrapLongitudes,
 } from "../shared/flight.js";
-import { findPlace, PRESETS } from "../shared/places.js";
+import { findPlace } from "../shared/places.js";
 
 test("playable-fast pacing bands", () => {
   assert.equal(flightDurationSeconds(0, "playable-fast"), 25);
@@ -40,7 +40,7 @@ test("unknown pace is rejected", () => {
   assert.throws(() => flightDurationSeconds(10, "instant"));
 });
 
-test("preset routes match the intended pacing", () => {
+test("landmark distances still match the playable-fast bands", () => {
   const taipei = findPlace("taipei");
   const kaohsiung = findPlace("kaohsiung");
   const tokyo = findPlace("tokyo");
@@ -63,9 +63,6 @@ test("preset routes match the intended pacing", () => {
   assert.ok(islandSec >= 60 && islandSec <= 6 * 60, islandSec);
   assert.ok(overseasSec > islandSec);
   assert.ok(overseasSec < 18 * 60, overseasSec);
-
-  assert.ok(PRESETS.some((preset) => preset.from === "taipei" && preset.to === "kaohsiung"));
-  assert.ok(PRESETS.some((preset) => preset.from === "taipei" && preset.to === "tokyo"));
 });
 
 test("progress follows time along the great circle and does not teleport", () => {

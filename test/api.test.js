@@ -60,16 +60,11 @@ test("health check is public", async () => {
   assert.equal(health.body.pace, "romantic-slow");
 });
 
-test("places and presets are available", async () => {
-  const places = await send(`${base}/api/places`);
-  const presets = await send(`${base}/api/presets`);
-  assert.equal(places.status, 200);
-  assert.ok(places.body.some((place) => place.id === "taipei"));
-  assert.ok(places.body.some((place) => place.id === "kaohsiung"));
-  assert.ok(places.body.some((place) => place.id === "tokyo"));
-  assert.equal(presets.status, 200);
-  assert.ok(presets.body.some((preset) => preset.id === "tpe-khh"));
-  assert.ok(presets.body.some((preset) => preset.id === "tpe-tyo"));
+test("fixed-route catalogs are gone", async () => {
+  const places = await fetch(`${base}/api/places`);
+  const presets = await fetch(`${base}/api/presets`);
+  assert.equal(places.status, 404);
+  assert.equal(presets.status, 404);
 });
 
 test("rejects a missing letter face and the same place twice", async () => {
@@ -104,6 +99,7 @@ test("launch schedules a flight the client can resume by time", async () => {
       toId: "taipei101",
       pace: "playable-fast",
       launch: true,
+      senderId: "suite-sender-01",
       imageDataUrl: PNG,
     }),
   });
@@ -164,7 +160,7 @@ test("draft can be saved and thrown later", async () => {
 
   const thrown = await send(`${base}/api/letters/${draft.body.id}/throw`, {
     method: "POST",
-    body: JSON.stringify({ pace: "playable-fast" }),
+    body: JSON.stringify({ pace: "playable-fast", senderId: "suite-sender-02" }),
   });
   assert.equal(thrown.status, 200);
   assert.equal(thrown.body.status, "in_flight");
@@ -188,7 +184,7 @@ test("draft can be saved and thrown later", async () => {
   });
   const sent = await send(`${base}/api/letters/${another.body.id}/send`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ senderId: "suite-sender-02" }),
   });
   assert.equal(sent.status, 200);
   assert.equal(sent.body.status, "in_flight");
@@ -208,6 +204,7 @@ test("romantic-slow stretches the same route", async () => {
       toId: "kaohsiung",
       pace: "playable-fast",
       launch: true,
+      senderId: "suite-sender-03",
       imageDataUrl: PNG,
     }),
   });
@@ -218,6 +215,7 @@ test("romantic-slow stretches the same route", async () => {
       toId: "kaohsiung",
       pace: "romantic-slow",
       launch: true,
+      senderId: "suite-sender-04",
       imageDataUrl: PNG,
     }),
   });
@@ -257,6 +255,7 @@ test("random draw avoids the sender city and the last recipient", async () => {
       fromId: "taipei",
       toId: drawn.body.to.id,
       launch: true,
+      senderId: "suite-sender-05",
       imageDataUrl: PNG,
     }),
   });
@@ -278,12 +277,9 @@ test("random draw avoids the sender city and the last recipient", async () => {
   assert.ok(nyc.body.distanceKm > 10000);
   assert.ok(nyc.body.durationSeconds >= 7 * 86400);
   assert.ok(nyc.body.durationSeconds <= 14 * 86400);
-  assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(
-    nyc.body.legs.reduce((sum, leg) => sum + leg.durationSeconds, 0),
-    nyc.body.durationSeconds,
-  );
-  assert.ok(nyc.body.legs[1].durationSeconds < nyc.body.legs[0].durationSeconds);
+  assert.deepEqual(nyc.body.legs.map((leg) => leg.mode), ["pigeon"]);
+  assert.equal(nyc.body.legs[0].durationSeconds, nyc.body.durationSeconds);
+  assert.equal(nyc.body.legs[0].to.name, "紐約");
 
   const london = await send(`${base}/api/route?fromId=taipei&toId=ellen`);
   assert.ok(london.body.durationSeconds >= 8 * 86400);
@@ -292,7 +288,8 @@ test("random draw avoids the sender city and the last recipient", async () => {
   const fast = await send(`${base}/api/route?fromId=taipei&toId=noah&pace=playable-fast`);
   assert.equal(fast.body.pace, "playable-fast");
   assert.equal(fast.body.durationSeconds, 18 * 60);
-  assert.ok(fast.body.legs[1].durationSeconds > fast.body.legs[0].durationSeconds);
+  assert.equal(fast.body.legs.length, 1);
+  assert.equal(fast.body.legs[0].durationSeconds, fast.body.durationSeconds);
 });
 
 test("activity counts real flights plus background trips", async () => {
@@ -313,23 +310,24 @@ test("activity counts real flights plus background trips", async () => {
       fromId: "taipei",
       toId: "jiahui",
       launch: true,
+      senderId: "suite-sender-06",
       imageDataUrl: PNG,
     }),
   });
   assert.equal(created.status, 201);
-  assert.deepEqual(created.body.legs.map((leg) => leg.mode), ["road", "plane", "road"]);
-  assert.equal(created.body.mode, "road");
+  assert.deepEqual(created.body.legs.map((leg) => leg.mode), ["pigeon"]);
+  assert.equal(created.body.mode, "pigeon");
+  assert.equal(created.body.legIndex, null);
 
   const after = await send(`${base}/api/activity`);
   assert.equal(after.body.traveling, before.body.traveling + 1);
   assert.ok(after.body.trips.some((trip) => trip.id === created.body.id && trip.kind === "yours"));
 
-  const roadSeconds = created.body.legs[0].durationSeconds;
-  const planeSeconds = created.body.legs[1].durationSeconds;
-  nowMs += (roadSeconds + planeSeconds * 0.15) * 1000;
+  nowMs += created.body.durationSeconds * 0.4 * 1000;
   const flying = await send(`${base}/api/letters/${created.body.id}`);
-  assert.equal(flying.body.mode, "plane");
-  assert.equal(flying.body.legIndex, 1);
+  assert.equal(flying.body.mode, "pigeon");
+  assert.equal(flying.body.legIndex, null);
+  assert.ok(flying.body.progress > 0.35 && flying.body.progress < 0.45, flying.body.progress);
   assert.ok(haversineKm(flying.body.position.lat, flying.body.position.lng, 25.047924, 121.517081) > 30);
 });
 
@@ -340,6 +338,7 @@ test("a multi-day letter is still on disk after the store is reopened", async ()
       fromId: "taipei",
       toId: "ellen",
       launch: true,
+      senderId: "suite-sender-07",
       imageDataUrl: PNG,
     }),
   });
@@ -353,6 +352,206 @@ test("a multi-day letter is still on disk after the store is reopened", async ()
   assert.equal(stored.status, "in_flight");
   assert.equal(stored.arrivesAt, created.body.arrivesAt);
   assert.equal(stored.durationSeconds, created.body.durationSeconds);
+  assert.equal(stored.senderId, "suite-sender-07");
+});
+
+test("five letters in flight is the limit for one sender, at either pace", async () => {
+  const store = createStore(dataDir);
+  const from = findPlace("taipei");
+  const to = findPlace("kaohsiung");
+  store.create({
+    id: "old-without-sender",
+    status: "in_flight",
+    from,
+    to,
+    distanceKm: 296,
+    durationSeconds: 3 * 86400,
+    pace: "romantic-slow",
+    legs: null,
+    imageFile: null,
+    createdAt: "2026-09-24T00:00:00.000Z",
+    updatedAt: "2026-09-24T00:00:00.000Z",
+    departedAt: "2026-09-24T00:00:00.000Z",
+    arrivesAt: "2026-10-20T00:00:00.000Z",
+    deliveredAt: null,
+  });
+
+  const sender = "quota-sender-01";
+  const other = "quota-sender-02";
+  const targets = ["noah", "ellen", "owen", "amina", "camille"];
+  const paces = ["playable-fast", "playable-fast", "romantic-slow", "playable-fast", "playable-fast"];
+  const mailed = [];
+  for (let i = 0; i < targets.length; i += 1) {
+    const created = await send(`${base}/api/letters`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromId: "taipei",
+        toId: targets[i],
+        pace: paces[i],
+        launch: true,
+        senderId: sender,
+        imageDataUrl: PNG,
+      }),
+    });
+    assert.equal(created.status, 201, created.body?.error);
+    assert.equal(created.body.senderId, sender);
+    mailed.push(created.body);
+  }
+
+  const blocked = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "jonas",
+      pace: "romantic-slow",
+      launch: true,
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /5 封/);
+  assert.match(blocked.body.error, /送到/);
+  assert.equal(blocked.body.limit, 5);
+  assert.equal(blocked.body.inFlight, 5);
+  const soonest = mailed.map((letter) => Date.parse(letter.arrivesAt)).sort((a, b) => a - b)[0];
+  assert.equal(Date.parse(blocked.body.soonestArrivesAt), soonest);
+
+  const elsewhere = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "tokyo",
+      toId: "noah",
+      pace: "playable-fast",
+      launch: true,
+      senderId: other,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(elsewhere.status, 201);
+
+  const draft = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "mina",
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(draft.status, 201);
+  assert.equal(draft.body.status, "draft");
+  const draftSend = await send(`${base}/api/letters/${draft.body.id}/send`, {
+    method: "POST",
+    body: JSON.stringify({ senderId: sender, pace: "playable-fast" }),
+  });
+  assert.equal(draftSend.status, 409);
+
+  const bare = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "sari",
+      launch: true,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(bare.status, 400);
+  assert.match(bare.body.error, /寄件人編號/);
+
+  nowMs = soonest + 1000;
+  const again = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "giulia",
+      pace: "playable-fast",
+      launch: true,
+      senderId: sender,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(again.status, 201, again.body?.error);
+  assert.equal(again.body.status, "in_flight");
+});
+
+test("delivered letters raise the slot count, and fifty is the cap of ten", async () => {
+  const store = createStore(dataDir);
+  const from = findPlace("taipei");
+  const to = findPlace("tokyo");
+  function stored(id, senderId, status) {
+    store.create({
+      id,
+      status,
+      senderId,
+      from,
+      to,
+      distanceKm: 2107,
+      durationSeconds: 5 * 86400,
+      pace: "romantic-slow",
+      legs: null,
+      imageFile: null,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-06T00:00:00.000Z",
+      departedAt: "2026-09-01T00:00:00.000Z",
+      arrivesAt: status === "in_flight" ? "2026-12-01T00:00:00.000Z" : "2026-09-06T00:00:00.000Z",
+      deliveredAt: status === "delivered" ? "2026-09-06T00:00:00.000Z" : null,
+    });
+  }
+  const grow = "quota-grow-01";
+  for (let i = 0; i < 5; i += 1) stored(`grown-delivered-${i}`, grow, "delivered");
+  stored("other-delivered", "quota-grow-02", "delivered");
+  stored("unsigned-delivered", null, "delivered");
+
+  const targets = ["noah", "ellen", "owen", "amina", "camille", "jonas"];
+  for (const toId of targets) {
+    const created = await send(`${base}/api/letters`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromId: "taipei",
+        toId,
+        pace: "playable-fast",
+        launch: true,
+        senderId: grow,
+        imageDataUrl: PNG,
+      }),
+    });
+    assert.equal(created.status, 201, created.body?.error);
+  }
+  const seventh = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "mina",
+      pace: "playable-fast",
+      launch: true,
+      senderId: grow,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(seventh.status, 409);
+  assert.equal(seventh.body.limit, 6);
+  assert.equal(seventh.body.inFlight, 6);
+  assert.match(seventh.body.error, /6 封/);
+
+  const capped = "quota-cap-01";
+  for (let i = 0; i < 50; i += 1) stored(`cap-delivered-${i}`, capped, "delivered");
+  for (let i = 0; i < 10; i += 1) stored(`cap-flying-${i}`, capped, "in_flight");
+  const eleventh = await send(`${base}/api/letters`, {
+    method: "POST",
+    body: JSON.stringify({
+      fromId: "taipei",
+      toId: "sari",
+      pace: "playable-fast",
+      launch: true,
+      senderId: capped,
+      imageDataUrl: PNG,
+    }),
+  });
+  assert.equal(eleventh.status, 409);
+  assert.equal(eleventh.body.limit, 10);
+  assert.equal(eleventh.body.inFlight, 10);
+  assert.match(eleventh.body.error, /10 封/);
 });
 });
 
@@ -388,6 +587,63 @@ test("a fast server default keeps an unnamed route playable", async () => {
   } finally {
     await new Promise((resolve, reject) => {
       fastServer.close((err) => (err ? reject(err) : resolve()));
+    });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a letter already stored with landmark endpoints still renders and arrives", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "letters-old-"));
+  const store = createStore(dir);
+  const from = findPlace("taipei");
+  const to = findPlace("kaohsiung");
+  const departedAt = "2026-09-24T00:00:00.000Z";
+  const arrivesAt = "2026-09-26T11:00:00.000Z";
+  store.create({
+    id: "old-fixed-route",
+    status: "in_flight",
+    from,
+    to,
+    distanceKm: haversineKm(from.lat, from.lng, to.lat, to.lng),
+    durationSeconds: 2 * 86400 + 11 * 3600,
+    pace: "romantic-slow",
+    legs: null,
+    imageFile: null,
+    createdAt: departedAt,
+    updatedAt: departedAt,
+    departedAt,
+    arrivesAt,
+    deliveredAt: null,
+  });
+  let nowMs = Date.parse("2026-09-25T05:30:00.000Z");
+  const app = createApp({ dataDir: dir, now: () => nowMs });
+  const oldServer = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => oldServer.once("listening", resolve));
+  try {
+    const root = `http://127.0.0.1:${oldServer.address().port}`;
+    const flyingRes = await fetch(`${root}/api/letters/old-fixed-route`);
+    const flying = await flyingRes.json();
+    assert.equal(flyingRes.status, 200);
+    assert.equal(flying.status, "in_flight");
+    assert.equal(flying.from.name, "台北");
+    assert.equal(flying.to.name, "高雄");
+    assert.ok(flying.progress > 0.2 && flying.progress < 0.8, flying.progress);
+    assert.ok(flying.remainingKm > 0);
+    assert.equal(flying.imageUrl, null);
+
+    const listed = await (await fetch(`${root}/api/letters`)).json();
+    assert.ok(listed.some((letter) => letter.id === "old-fixed-route" && letter.status === "in_flight"));
+
+    nowMs = Date.parse(arrivesAt) + 1000;
+    const arrived = await (await fetch(`${root}/api/letters/old-fixed-route`)).json();
+    assert.equal(arrived.status, "delivered");
+    assert.equal(arrived.progress, 1);
+    assert.equal(arrived.remainingKm, 0);
+    assert.equal(arrived.to.name, "高雄");
+    assert.equal(arrived.deliveredAt, arrivesAt);
+  } finally {
+    await new Promise((resolve, reject) => {
+      oldServer.close((err) => (err ? reject(err) : resolve()));
     });
     await rm(dir, { recursive: true, force: true });
   }

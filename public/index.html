@@ -23,19 +23,37 @@
         <div class="scroll">
           <header class="topbar">
             <h1>在路上</h1>
+            <button type="button" class="region-link" id="btn-region" hidden>我的地區</button>
           </header>
           <div class="activity">
             <p id="travel-count"></p>
             <div id="home-map" class="aged-map"></div>
           </div>
+          <div class="quota" id="home-quota"></div>
           <div id="home-letters"></div>
-          <section class="block">
-            <h2>固定路線</h2>
-            <div id="preset-list"></div>
-          </section>
         </div>
         <div class="dock">
           <button type="button" class="btn primary" id="btn-draw">抽一位隨機收件人</button>
+        </div>
+      </section>
+
+      <section id="view-region" class="view has-dock" hidden>
+        <div class="scroll">
+          <header class="topbar">
+            <button type="button" class="icon-btn" id="region-back" aria-label="返回" hidden>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <h1>我的地區</h1>
+          </header>
+          <p class="region-lede" id="region-lede"></p>
+          <div id="region-map" class="aged-map region-map"></div>
+          <p class="region-picked" id="region-picked">在地圖上點一個城市，或從下面的名單選。</p>
+          <div id="region-list"></div>
+        </div>
+        <div class="dock">
+          <button type="button" class="btn primary" id="btn-region-save" disabled>設為我的地區</button>
         </div>
       </section>
 
@@ -53,12 +71,9 @@
           <div id="recipient-banner" class="recipient-card" hidden>
             <p class="who" id="recipient-name"></p>
             <p class="where" id="recipient-where"></p>
-            <button type="button" class="text-btn" id="btn-change-recipient">換一位</button>
+            <button type="button" class="text-btn" id="btn-change-recipient" hidden>換一位</button>
           </div>
-          <fieldset class="panel" id="sender-panel" hidden>
-            <legend>寄出地</legend>
-            <div id="sender-chips" class="chip-scroller"></div>
-          </fieldset>
+          <p class="return-address compose-return" id="compose-origin"></p>
           <div class="paper-frame">
             <canvas id="letter-canvas" width="600" height="760"></canvas>
           </div>
@@ -68,14 +83,6 @@
             <button type="button" id="btn-clear">清除</button>
             <input id="file-input" type="file" accept="image/*" hidden />
           </div>
-          <fieldset class="panel" id="from-panel">
-            <legend>寄出地</legend>
-            <div id="from-chips" class="chips"></div>
-          </fieldset>
-          <fieldset class="panel" id="to-panel">
-            <legend>收件地</legend>
-            <div id="to-chips" class="chips"></div>
-          </fieldset>
           <div class="estimate" id="estimate"></div>
           <div class="pace-row">
             <span>郵寄時間</span>
@@ -85,6 +92,7 @@
             </div>
           </div>
           <p class="hint" id="pace-hint">像真正的國際信件。同城約一天，國內兩三天，鄰近區域約四五天到一週，跨洲要一到兩週。</p>
+          <div class="quota" id="compose-quota"></div>
         </div>
         </div>
         <div class="dock dock-split">
@@ -106,11 +114,7 @@
           <p class="remain" id="draw-where"></p>
           <p class="draw-meta" id="draw-meta"></p>
           <p class="via" id="draw-via"></p>
-          <div class="leg-legend" id="draw-legend"></div>
-          <div class="sender-line">
-            <span>寄出地</span>
-            <div id="draw-senders" class="chip-scroller"></div>
-          </div>
+          <p class="return-address" id="draw-origin"></p>
           <div class="sheet-actions">
             <button type="button" class="btn" id="btn-redraw">換一位</button>
             <button type="button" class="btn primary" id="btn-write">寫給這位</button>
@@ -125,21 +129,14 @@
             <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
-        <div id="transfer-banner" class="transfer-banner" role="status" aria-live="polite" hidden>
-          <div class="postal-sticker transfer-sticker">
-            <p id="transfer-kicker" class="sticker-place"></p>
-            <p id="transfer-title" class="sticker-line"></p>
-            <p id="transfer-mark" class="sticker-mode"></p>
-          </div>
-        </div>
         <div class="sheet" id="flight-sheet">
           <p class="travel-count" id="flight-travel"></p>
           <p class="route" id="flight-route"></p>
+          <p class="return-address" id="flight-origin"></p>
           <p class="mode-now" id="flight-mode"></p>
           <p class="eta" id="flight-eta"></p>
           <p class="countdown" id="flight-countdown"></p>
           <p class="remain" id="flight-remain"></p>
-          <div class="leg-legend" id="flight-legend"></div>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
           <button type="button" class="btn primary" id="btn-open" hidden>拆信</button>
         </div>
@@ -163,6 +160,7 @@
               <div class="envelope-lining" aria-hidden="true"></div>
               <div class="envelope-pocket" aria-hidden="true">
                 <div class="envelope-body"></div>
+                <p class="envelope-return" id="envelope-return"></p>
                 <div class="postmark">
                   <span>在路上</span>
                   <b id="postmark-place"></b>
@@ -180,6 +178,36 @@
           </div>
         </div>
       </section>
+      <div id="post-slip" class="counter-slip" hidden>
+        <div class="slip-paper" role="dialog" aria-modal="true" aria-labelledby="slip-title">
+          <p class="slip-kicker">郵局櫃檯</p>
+          <h2 id="slip-title">寄件回執</h2>
+          <p class="slip-warn" id="slip-warning"></p>
+          <dl class="slip-rows">
+            <div>
+              <dt>收件人</dt>
+              <dd id="slip-who"></dd>
+            </div>
+            <div>
+              <dt>收件城市</dt>
+              <dd id="slip-where"></dd>
+            </div>
+            <div>
+              <dt>寄自</dt>
+              <dd id="slip-from"></dd>
+            </div>
+            <div>
+              <dt>預計抵達</dt>
+              <dd id="slip-when"></dd>
+              <dd class="slip-span" id="slip-span"></dd>
+            </div>
+          </dl>
+          <div class="slip-actions">
+            <button type="button" class="btn" id="btn-slip-back">先不寄</button>
+            <button type="button" class="btn slip-confirm" id="btn-slip-confirm">確認寄出</button>
+          </div>
+        </div>
+      </div>
       <div id="post-stage" class="post-stage" hidden>
         <div class="post-letter-slot">
           <div class="post-letter-wrap">

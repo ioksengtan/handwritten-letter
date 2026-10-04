@@ -1,4 +1,8 @@
-/** Real landmark coordinates used as send / receive pins. */
+/**
+ * Landmark coordinates kept so letters already stored in data/letters.json,
+ * and older requests that still name these ids, can resolve a pin.
+ * They are not offered as routes on the home page.
+ */
 export const PLACES = [
   {
     id: "taipei",
@@ -37,34 +41,6 @@ export const PLACES = [
   },
 ];
 
-export const PRESETS = [
-  {
-    id: "tpe-khh",
-    from: "taipei",
-    to: "kaohsiung",
-    label: "台北 → 高雄",
-    note: "同島",
-  },
-  {
-    id: "tpe-tyo",
-    from: "taipei",
-    to: "tokyo",
-    label: "台北 → 東京",
-    note: "較長",
-  },
-  {
-    id: "tpe-101",
-    from: "taipei",
-    to: "taipei101",
-    label: "台北 → 台北101",
-    note: "同城",
-  },
-];
-
 export function findPlace(id) {
   return PLACES.find((place) => place.id === id) || null;
-}
-
-export function findPreset(id) {
-  return PRESETS.find((preset) => preset.id === id) || null;
 }

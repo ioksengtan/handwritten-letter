@@ -4,48 +4,73 @@ import {
   alignLongitude,
   bearingDegrees,
   haversineKm,
-  locateOnLegs,
+  interpolate,
   samplePath,
   unwrapLongitudes,
 } from "/shared/flight.js";
-import { PLACES, findPlace, findPreset } from "/shared/places.js";
+import { findPlace } from "/shared/places.js";
 import { CITIES, findCity, findRecipient } from "/shared/recipients.js";
-import { MODE_COLOR, MODE_LABEL, legProgressLine, legVia, planCourier, transferBeat } from "/shared/route.js";
+import {
+  SENDER_PROFILE_KEY,
+  normalizeSenderId,
+  parseSenderProfile,
+  serializeSenderProfile,
+} from "/shared/profile.js";
+import { quotaSnapshot, quotaWaitMessage, remainingLabel } from "/shared/quota.js";
+import { POST_IRREVOCABLE } from "/shared/slip.js";
+import { planCourier } from "/shared/route.js";
 import { formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
 const PAPER = "#fffdf8";
 const INK = "#2a4a8a";
-const INK_LINE = {
-  road: { rest: "3 8", flown: null, weight: 2.3, flownWeight: 3.6 },
-  train: { rest: "10 4 2 5", flown: null, weight: 2.3, flownWeight: 3.5 },
-  plane: { rest: "1 9", flown: "14 4", weight: 2.05, flownWeight: 3.35 },
-};
-const PLANE_SVG = `
-<svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
-  <path d="M32 3 C34.2 3 36 8 36 14 L36 26 L58 34 L58 39 L36 35 L36 48 L46 56 L46 60 L32 55 L18 60 L18 56 L28 48 L28 35 L6 39 L6 34 L28 26 L28 14 C28 8 29.8 3 32 3 Z" fill="#f3eadc" stroke="#3c342c" stroke-width="1.35" stroke-linejoin="round"/>
+const PIGEON_INK = "#6e342e";
+const PIGEON_SHAPES = `
+  <path fill="none" stroke-width="2.6" stroke-linecap="round" d="M18 34c2-3 6-2 7 1M22 18c3-2 7 0 6 3M92 16c3 1 5 4 3 6M100 36c1 3-1 6-4 5M96 62c-3 2-7 1-8-2M34 68c-4 1-7-2-6-5M12 54c-2 2-5 1-6-2"/>
+  <path fill="none" stroke-width="1.6" stroke-linecap="round" d="M30 22c4-1 8 1 9 4M78 18c4 2 7 5 5 8M36 60c5 2 10 0 12-3"/>
+  <path d="M24 46 8 38 16 48 5 55 20 51Z"/>
+  <ellipse cx="46" cy="48" rx="22" ry="11" transform="rotate(-14 46 48)"/>
+  <path d="M38 44C42 20 68 12 86 26 68 28 54 38 48 46Z"/>
+  <circle cx="68" cy="38" r="10"/>
+  <path d="M74 37 92 40 74 44Z"/>
+  <circle cx="14" cy="24" r="1.1"/>
+  <circle cx="102" cy="22" r="0.9"/>
+  <circle cx="16" cy="64" r="1"/>
+  <circle cx="98" cy="66" r="1.15"/>
+  <circle cx="54" cy="8" r="0.7"/>`;
+
+function pigeonSvg(id) {
+  return `
+<svg viewBox="0 0 110 78" width="96" height="68" aria-hidden="true">
+  <defs>
+    <mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="110" height="78">
+      <rect width="110" height="78" fill="#000"/>
+      <g fill="#fff" stroke="#fff">${PIGEON_SHAPES}</g>
+      <path fill="#000" stroke="none" d="M42 22c7 1 9 9 2 11-7 1-10-7-2-11z"/>
+      <path fill="#000" stroke="none" d="M34 44c6 .4 8 6 2 7-6 .4-9-4-2-7z"/>
+      <circle cx="58" cy="30" r="2.4" fill="#000" stroke="none"/>
+      <circle cx="72" cy="36" r="1.6" fill="#000" stroke="none"/>
+    </mask>
+  </defs>
+  <g fill="${PIGEON_INK}" stroke="${PIGEON_INK}" mask="url(#${id})">${PIGEON_SHAPES}</g>
 </svg>`;
-const TRUCK_SVG = `
-<svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
-  <rect x="22" y="8" width="20" height="16" rx="3" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
-  <rect x="16" y="24" width="32" height="22" rx="3" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
-  <circle cx="24" cy="50" r="4" fill="#1d2a3a"/>
-  <circle cx="40" cy="50" r="4" fill="#1d2a3a"/>
-</svg>`;
-const TRAIN_SVG = `
-<svg viewBox="0 0 64 64" width="42" height="42" aria-hidden="true">
-  <rect x="18" y="8" width="28" height="40" rx="8" fill="#fffefb" stroke="#1d2a3a" stroke-width="1.7"/>
-  <rect x="24" y="16" width="16" height="10" rx="2" fill="#d9cbb6"/>
-  <circle cx="24" cy="52" r="3.4" fill="#1d2a3a"/>
-  <circle cx="40" cy="52" r="3.4" fill="#1d2a3a"/>
-</svg>`;
-const MODE_SVG = { road: TRUCK_SVG, train: TRAIN_SVG, plane: PLANE_SVG };
+}
 
 const state = {
   view: "home",
-  fromId: "taipei",
-  toId: "kaohsiung",
+  fromId: null,
+  originId: null,
+  senderId: null,
+  letters: [],
+  quota: null,
+  regionDraft: null,
+  regionMode: "register",
+  regionMap: null,
+  regionMarkers: new Map(),
+  afterRegion: null,
+  toId: null,
   recipient: null,
-  mode: "preset",
+  legacyTo: null,
+  mode: "recipient",
   pace: DEFAULT_PACE,
   draftId: null,
   ctx: null,
@@ -105,6 +130,63 @@ function recallPace() {
   }
 }
 
+const REGISTER_LEDE = "第一次來，請先選定你的地區。之後每封信都從這裡寄出，像信封上的回郵地址。這台瀏覽器會記住。還沒有帳號；以後若有帳號，這份地區會跟著帳號走。";
+const SETTINGS_LEDE = "這是以後每封信的寄出地，不是這一封信的選項。已經寄出的信不會改。以後若有帳號，這份地區會跟著帳號走。";
+
+function readSenderProfile() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(SENDER_PROFILE_KEY);
+  } catch {
+    return null;
+  }
+  const profile = parseSenderProfile(raw);
+  if (!profile || !findCity(profile.originId)) return null;
+  let senderId = profile.senderId;
+  if (!senderId) {
+    senderId = normalizeSenderId(crypto.randomUUID());
+    try {
+      localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(profile.originId, senderId));
+    } catch {
+      /* private mode */
+    }
+  }
+  return { originId: profile.originId, senderId };
+}
+
+function writeOriginId(id) {
+  const senderId = state.senderId || normalizeSenderId(crypto.randomUUID());
+  try {
+    localStorage.setItem(SENDER_PROFILE_KEY, serializeSenderProfile(id, senderId));
+  } catch {
+    /* private mode */
+  }
+  state.originId = id;
+  state.senderId = senderId;
+  state.fromId = id;
+  paintRegionLink();
+}
+
+function originLabel(point) {
+  if (!point) return "";
+  const place = point.city || point.name;
+  if (point.country && point.country !== place) return `${place} · ${point.country}`;
+  return place;
+}
+
+function paintRegionLink() {
+  const button = $("btn-region");
+  const city = findCity(state.originId);
+  if (!button) return;
+  if (!city) {
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  button.textContent = `地區 · ${city.name}`;
+  button.setAttribute("aria-label", `我的地區，目前是${city.name}。這不是寄信時的選項。`);
+}
+
 function formatDistance(km) {
   if (km < 1) return `${Math.max(1, Math.round(km * 1000))} 公尺`;
   if (km < 10) return `${km.toFixed(1)} 公里`;
@@ -147,7 +229,11 @@ async function api(url, options = {}) {
       data = null;
     }
   }
-  if (!res.ok) throw new Error(data?.error || "連線失敗");
+  if (!res.ok) {
+    const error = new Error(data?.error || "連線失敗");
+    error.payload = data;
+    throw error;
+  }
   return data;
 }
 
@@ -168,7 +254,7 @@ function navigate(hash) {
 
 function showOnly(name) {
   state.view = name;
-  for (const id of ["home", "compose", "draw", "flight", "read"]) {
+  for (const id of ["home", "region", "compose", "draw", "flight", "read"]) {
     $(`view-${id}`).hidden = id !== name;
   }
 }
@@ -205,10 +291,7 @@ function stopLoops() {
   const flight = state.flight;
   if (flight) {
     for (const id of flight.cameraTimers || []) clearTimeout(id);
-    if (flight.transferTimer) clearTimeout(flight.transferTimer);
-    if (flight.glanceTimer) clearTimeout(flight.glanceTimer);
   }
-  hideTransfer();
   if (state.map) {
     state.map.remove();
     state.map = null;
@@ -298,7 +381,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!letters.length) {
-    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，或用下面的固定路線試寄。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。抽一位收件人，寄到對方住的城市。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -312,15 +395,9 @@ function renderHomeList(letters) {
       let detail = "草稿";
       let extra = "";
       if (letter.status === "in_flight") {
-        const index = letter.legIndex ?? 0;
-        const legs = letter.legs?.length ? letter.legs : null;
-        const story = legs
-          ? legProgressLine(legs[index] || legs[0], { index, count: legs.length })
-          : (MODE_LABEL[letter.mode] || "");
-        const mode = story ? `${esc(story)} · ` : "";
         const when = formatArrival(letter.arrivesAt);
         const due = when ? ` · 預計 ${esc(when)}` : "";
-        detail = `${mode}剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatCountdown(letter.etaSeconds))}${due}`;
+        detail = `信鴿在飛 · 剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatCountdown(letter.etaSeconds))}${due}`;
         extra = `<span class="mini-track"><span style="width:${Math.round(letter.progress * 100)}%"></span></span>`;
       } else if (letter.status === "delivered") {
         detail = "已抵達 · 拆信";
@@ -352,100 +429,215 @@ async function loadActivity() {
   return activity;
 }
 
+function paintMailQuota(letters) {
+  const quota = quotaSnapshot(letters || [], state.senderId);
+  state.quota = quota;
+  const arrival = quota.soonestArrivesAt ? formatArrival(quota.soonestArrivesAt) : "";
+  const wait = quota.full ? quotaWaitMessage(arrival) : "";
+  const slots = Array.from({ length: quota.limit }, (_, index) => {
+    const used = index < quota.inFlight;
+    return `<li class="stamp-slot${used ? " is-used" : ""}">${used ? "<span>郵</span>" : ""}</li>`;
+  }).join("");
+  const next = quota.nextNote ? `<p class="quota-next">${esc(quota.nextNote)}</p>` : "";
+  const html = `<p class="quota-label">${esc(remainingLabel(quota.remaining))}</p><ol class="stamp-slots" aria-hidden="true">${slots}</ol>${next}${wait ? `<p class="quota-wait">${esc(wait)}</p>` : ""}`;
+  const spoken = [remainingLabel(quota.remaining), quota.nextNote, wait].filter(Boolean).join("。");
+  for (const id of ["home-quota", "compose-quota"]) {
+    const root = $(id);
+    if (!root) continue;
+    root.classList.toggle("is-full", quota.full);
+    root.innerHTML = html;
+    root.setAttribute("aria-label", spoken);
+  }
+  const send = $("btn-send");
+  if (send && !state.submitting) send.disabled = quota.full;
+  const confirm = $("btn-slip-confirm");
+  if (confirm && !state.submitting) confirm.disabled = quota.full;
+}
+
+async function refreshQuota() {
+  const letters = await api("/api/letters");
+  state.letters = letters;
+  paintMailQuota(letters);
+  return letters;
+}
+
 async function refreshHome() {
-  const [letters] = await Promise.all([api("/api/letters"), loadActivity()]);
+  const [letters] = await Promise.all([refreshQuota(), loadActivity()]);
   if (state.view !== "home") return;
   renderHomeList(letters);
   ensureHomeMap();
 }
 
-function buildPresets() {
-  const root = $("preset-list");
-  root.replaceChildren();
-  for (const preset of ["tpe-khh", "tpe-tyo", "tpe-101"].map(findPreset)) {
-    const from = findPlace(preset.from);
-    const to = findPlace(preset.to);
-    const plan = planCourier({ from, to, pace: state.pace });
-    const modes = plan.legs.map((leg) => MODE_LABEL[leg.mode]).join(" → ");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "preset";
-    button.innerHTML = `<span><b>${esc(preset.label)}</b><small>${esc(preset.note)} · ${esc(modes)} · ${esc(formatDistance(plan.distanceKm))}</small></span><span class="preset-time">約 ${esc(formatSpan(plan.durationSeconds))}</span>`;
-    button.addEventListener("click", () => navigate(`#/compose?preset=${preset.id}`));
-    root.append(button);
-  }
-}
+const CONTINENTS = ["亞洲", "歐洲", "非洲", "美洲", "大洋洲"];
 
-function buildPlaceChips() {
-  for (const [containerId, which] of [["from-chips", "from"], ["to-chips", "to"]]) {
-    const root = $(containerId);
-    for (const place of PLACES) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "chip";
-      button.dataset.id = place.id;
-      button.textContent = place.name;
-      button.addEventListener("click", () => selectPlace(which, place.id));
-      root.append(button);
-    }
-  }
-  for (const containerId of ["sender-chips", "draw-senders"]) {
-    const root = $(containerId);
-    for (const city of CITIES) {
+function buildRegionList() {
+  const root = $("region-list");
+  root.replaceChildren();
+  for (const continent of CONTINENTS) {
+    const cities = CITIES.filter((city) => city.continent === continent);
+    if (!cities.length) continue;
+    const section = document.createElement("section");
+    section.className = "region-group";
+    const heading = document.createElement("h2");
+    heading.textContent = continent;
+    const row = document.createElement("div");
+    row.className = "region-cities";
+    for (const city of cities) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "chip";
       button.dataset.id = city.id;
       button.textContent = city.name;
-      button.addEventListener("click", () => {
-        if (containerId === "draw-senders") changeDrawSender(city.id);
-        else selectSender(city.id);
-      });
-      root.append(button);
+      button.addEventListener("click", () => selectRegionCity(city.id));
+      row.append(button);
+    }
+    section.append(heading, row);
+    root.append(section);
+  }
+}
+
+function paintRegionChoices() {
+  const city = findCity(state.regionDraft);
+  setText(
+    "region-picked",
+    city ? `${city.name} · ${city.country}` : "在地圖上點一個城市，或從下面的名單選。",
+  );
+  $("btn-region-save").disabled = !city;
+  for (const button of $("region-list").querySelectorAll("button")) {
+    const selected = button.dataset.id === state.regionDraft;
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+    if (selected) button.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  for (const [id, marker] of state.regionMarkers) {
+    const el = marker.getElement();
+    if (el) el.classList.toggle("is-picked", id === state.regionDraft);
+  }
+}
+
+function selectRegionCity(id, { fly = true } = {}) {
+  if (!findCity(id)) return;
+  state.regionDraft = id;
+  paintRegionChoices();
+  const city = findCity(id);
+  if (fly && state.regionMap && city) {
+    state.regionMap.flyTo([city.lat, city.lng], 4, { duration: 0.6 });
+  }
+}
+
+function nearestCity(lat, lng) {
+  let best = CITIES[0];
+  let bestKm = Infinity;
+  for (const city of CITIES) {
+    const km = haversineKm(lat, lng, city.lat, city.lng);
+    if (km < bestKm) {
+      bestKm = km;
+      best = city;
     }
   }
+  return best;
 }
 
-function paintSenderChips() {
-  for (const containerId of ["sender-chips", "draw-senders"]) {
-    const root = $(containerId);
-    for (const button of root.querySelectorAll("button")) {
-      const selected = button.dataset.id === state.fromId;
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-      if (selected) button.scrollIntoView({ inline: "center", block: "nearest" });
-    }
+function ensureRegionMap() {
+  const container = $("region-map");
+  if (state.regionMap) {
+    requestAnimationFrame(() => state.regionMap.invalidateSize());
+    paintRegionChoices();
+    return;
   }
+  const map = L.map(container, {
+    zoomControl: false,
+    attributionControl: true,
+    worldCopyJump: true,
+  });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  map.setView([18, 20], 1);
+  for (const city of CITIES) {
+    const marker = L.marker([city.lat, city.lng], {
+      icon: L.divIcon({
+        className: "region-pin",
+        html: "<span></span>",
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      }),
+      keyboard: false,
+    }).addTo(map);
+    marker.on("click", () => selectRegionCity(city.id));
+    state.regionMarkers.set(city.id, marker);
+  }
+  map.on("click", (event) => {
+    const city = nearestCity(event.latlng.lat, event.latlng.lng);
+    if (city) selectRegionCity(city.id);
+  });
+  state.regionMap = map;
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    paintRegionChoices();
+  });
 }
 
-function selectSender(id) {
-  state.fromId = id;
-  paintSenderChips();
-  updateEstimate();
-  if (state.mode === "recipient" && state.recipient) {
-    const next = `#/compose?from=${encodeURIComponent(id)}&to=${encodeURIComponent(state.recipient.id)}`;
-    if (location.hash !== next) history.replaceState(null, "", next);
-  }
+function showRegion(mode) {
+  state.regionMode = mode;
+  showOnly("region");
+  $("region-back").hidden = mode !== "settings";
+  $("region-lede").textContent = mode === "settings" ? SETTINGS_LEDE : REGISTER_LEDE;
+  $("btn-region-save").textContent = mode === "settings" ? "儲存地區" : "設為我的地區";
+  if (mode === "settings") state.regionDraft = state.originId;
+  else if (!findCity(state.regionDraft)) state.regionDraft = null;
+  ensureRegionMap();
+  paintRegionChoices();
 }
 
-function paintChips() {
-  for (const button of $("from-chips").querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", button.dataset.id === state.fromId ? "true" : "false");
-  }
-  for (const button of $("to-chips").querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", button.dataset.id === state.toId ? "true" : "false");
-  }
+function saveRegion() {
+  const city = findCity(state.regionDraft);
+  if (!city) return;
+  const next = state.regionMode === "register" ? (state.afterRegion || "#/") : "#/";
+  state.afterRegion = null;
+  writeOriginId(city.id);
+  navigate(next === location.hash ? "#/" : next);
 }
 
-function selectPlace(which, id) {
-  if (which === "from") state.fromId = id;
-  else state.toId = id;
-  paintChips();
-  updateEstimate();
+function closePostSlip() {
+  const slip = $("post-slip");
+  if (slip) slip.hidden = true;
+}
+
+async function openPostSlip() {
+  try {
+    await refreshQuota();
+  } catch {
+    /* keep the last snapshot */
+  }
+  if (state.quota?.full) {
+    const arrival = state.quota.soonestArrivesAt ? formatArrival(state.quota.soonestArrivesAt) : "";
+    showToast(quotaWaitMessage(arrival));
+    return;
+  }
+  const { from, to } = currentEndpoints();
+  if (!from || !to || sameEndpoint(from, to)) {
+    showToast("請選擇不同的寄出地與收件地");
+    return;
+  }
+  if (!canvasHasInk()) {
+    showToast("請先寫下或上傳信面");
+    return;
+  }
+  const plan = planCourier({ from, to, pace: state.pace });
+  const arrivesAt = new Date(nowMs() + plan.durationSeconds * 1000).toISOString();
+  setText("slip-warning", POST_IRREVOCABLE);
+  setText("slip-who", to.name || to.city);
+  setText("slip-where", whereLine(to));
+  setText("slip-from", originLabel(from));
+  setText("slip-when", formatArrival(arrivesAt));
+  setText("slip-span", `路上約 ${formatSpan(plan.durationSeconds)}`);
+  $("post-slip").hidden = false;
 }
 
 function currentEndpoints() {
-  const from = senderById(state.fromId);
-  const to = state.recipient || findPlace(state.toId);
+  const from = senderById(state.originId);
+  const to = state.recipient || state.legacyTo;
   return { from, to };
 }
 
@@ -459,6 +651,11 @@ function sameEndpoint(from, to) {
 function updateEstimate() {
   const box = $("estimate");
   const { from, to } = currentEndpoints();
+  if (!from || !to) {
+    box.className = "estimate";
+    box.textContent = "";
+    return;
+  }
   if (sameEndpoint(from, to)) {
     box.className = "estimate warn";
     box.textContent = "請選擇不同的寄出地與收件地";
@@ -466,7 +663,7 @@ function updateEstimate() {
   }
   const plan = planCourier({ from, to, pace: state.pace });
   box.className = "estimate";
-  box.innerHTML = `<strong>${esc(formatDistance(plan.distanceKm))}</strong><span>約 ${esc(formatSpan(plan.durationSeconds))}</span><span class="via">${esc(legVia(plan.legs))}</span>`;
+  box.innerHTML = `<strong>${esc(formatDistance(plan.distanceKm))}</strong><span>約 ${esc(formatSpan(plan.durationSeconds))}</span><span class="via">信鴿直飛</span>`;
 }
 
 function routeUrl(fromId, toId) {
@@ -476,16 +673,24 @@ function routeUrl(fromId, toId) {
 
 function applyComposeMode() {
   const recipientMode = state.mode === "recipient" && state.recipient;
-  $("recipient-banner").hidden = !recipientMode;
-  $("sender-panel").hidden = !recipientMode;
-  $("from-panel").hidden = Boolean(recipientMode);
-  $("to-panel").hidden = Boolean(recipientMode);
+  const legacyMode = state.mode === "legacy" && state.legacyTo;
+  const addressed = recipientMode || legacyMode;
+  $("recipient-banner").hidden = !addressed;
+  $("btn-change-recipient").hidden = !recipientMode;
+  const origin = senderById(state.originId);
+  setText("compose-origin", origin ? `回郵地址 · ${originLabel(origin)}` : "");
   if (recipientMode) {
     $("recipient-name").textContent = state.recipient.name;
     $("recipient-where").textContent = whereLine(state.recipient);
-    paintSenderChips();
+  } else if (legacyMode) {
+    const place = state.legacyTo;
+    $("recipient-name").textContent = place.city && place.name !== place.city
+      ? `${place.name} · ${place.city}`
+      : place.name;
+    $("recipient-where").textContent = place.country && place.country !== place.name
+      ? place.country
+      : "";
   }
-  paintChips();
   updateEstimate();
 }
 
@@ -499,7 +704,6 @@ function setPace(pace, { remember = false } = {}) {
   hint.hidden = false;
   hint.textContent = PACE_HINT[pace];
   updateEstimate();
-  buildPresets();
 }
 
 function fillPaper() {
@@ -651,22 +855,20 @@ async function openCompose(params, token) {
   setupCanvas();
   state.draftId = null;
   state.recipient = null;
-  state.mode = "preset";
-  const preset = findPreset(params.get("preset") || "");
+  state.legacyTo = null;
+  state.mode = "recipient";
   const recipient = findRecipient(params.get("to") || "");
+  const draftId = params.get("draft");
+  if (!recipient && !draftId) {
+    navigate("#/draw");
+    return;
+  }
   if (recipient) {
     state.mode = "recipient";
     state.recipient = recipient;
     state.toId = recipient.id;
-    state.fromId = params.get("from") || "taipei";
-  } else if (preset) {
-    state.fromId = preset.from;
-    state.toId = preset.to;
-  } else if (!params.get("draft")) {
-    state.fromId = "taipei";
-    state.toId = "kaohsiung";
+    state.fromId = state.originId;
   }
-  const draftId = params.get("draft");
   if (draftId) {
     const letter = await api(`/api/letters/${draftId}`);
     if (token !== renderToken) return;
@@ -676,16 +878,18 @@ async function openCompose(params, token) {
       return;
     }
     state.draftId = letter.id;
-    state.fromId = letter.from.id;
+    state.fromId = state.originId;
     state.toId = letter.to.id;
     if (PACES[letter.pace]) state.pace = letter.pace;
     const drafted = findRecipient(letter.to.id);
     if (drafted) {
       state.mode = "recipient";
       state.recipient = drafted;
+      state.legacyTo = null;
     } else {
-      state.mode = "preset";
+      state.mode = "legacy";
       state.recipient = null;
+      state.legacyTo = letter.to;
     }
     if (letter.imageUrl) {
       const img = await loadImage(letter.imageUrl);
@@ -694,6 +898,8 @@ async function openCompose(params, token) {
   }
   applyComposeMode();
   setPace(state.pace);
+  await refreshQuota();
+  if (token !== renderToken) return;
 }
 
 async function submitLetter(launch) {
@@ -710,11 +916,13 @@ async function submitLetter(launch) {
   state.submitting = true;
   $("btn-send").disabled = true;
   $("btn-save").disabled = true;
+  $("btn-slip-confirm").disabled = true;
   try {
     const body = {
       fromId: from.id,
       toId: state.recipient ? state.recipient.id : to.id,
       pace: state.pace,
+      senderId: state.senderId,
       imageDataUrl: $("letter-canvas").toDataURL("image/jpeg", 0.86),
       launch,
     };
@@ -735,14 +943,20 @@ async function submitLetter(launch) {
         body: JSON.stringify(body),
       });
     }
+    closePostSlip();
     if (launch) playPost(letter.id, body.imageDataUrl);
     else navigate("#/");
   } catch (err) {
-    showToast(err.message);
+    const arrival = err.payload?.soonestArrivesAt ? formatArrival(err.payload.soonestArrivesAt) : "";
+    showToast(arrival ? quotaWaitMessage(arrival) : err.message);
   } finally {
     state.submitting = false;
-    $("btn-send").disabled = false;
     $("btn-save").disabled = false;
+    if (state.letters.length) paintMailQuota(state.letters);
+    else {
+      $("btn-send").disabled = false;
+      $("btn-slip-confirm").disabled = false;
+    }
   }
 }
 
@@ -751,30 +965,29 @@ function setText(id, value) {
   if (el.textContent !== value) el.textContent = value;
 }
 
-function letterLegs(record) {
-  if (record.legs?.length) return record.legs;
-  const from = record.from;
-  const to = record.to;
-  return [{
-    mode: "plane",
-    from: { name: from.name, lat: from.lat, lng: from.lng },
-    to: { name: to.city || to.name, lat: to.lat, lng: to.lng },
-    distanceKm: record.distanceKm || haversineKm(from.lat, from.lng, to.lat, to.lng),
-    durationSeconds: record.durationSeconds || 1,
-  }];
+function pigeonHtml() {
+  return `<div class="pigeon-rot"><span class="pigeon-ghost">${pigeonSvg("pigeon-ghost-mask")}</span><span class="pigeon-ink">${pigeonSvg("pigeon-ink-mask")}</span></div>`;
 }
 
-function sampleLegs(legs) {
-  const flat = [];
-  const ranges = [];
-  for (const leg of legs) {
-    const chunk = samplePath(leg.from, leg.to, leg.mode === "plane" ? 64 : 12);
-    const start = flat.length;
-    flat.push(...(start === 0 ? chunk : chunk.slice(1)));
-    ranges.push([start, flat.length]);
+function routeEnds(record) {
+  if (record?.from && record?.to && Number.isFinite(record.from.lat) && Number.isFinite(record.to.lat)) {
+    return {
+      from: { name: record.from.name, lat: record.from.lat, lng: record.from.lng },
+      to: {
+        name: record.to.city || record.to.name,
+        lat: record.to.lat,
+        lng: record.to.lng,
+      },
+    };
   }
-  const unwrapped = unwrapLongitudes(flat);
-  return ranges.map(([start, end]) => unwrapped.slice(start, end));
+  const legs = record?.legs;
+  if (legs?.length) return { from: legs[0].from, to: legs[legs.length - 1].to };
+  return null;
+}
+
+function pigeonPath(from, to) {
+  const flat = samplePath(from, to, 64);
+  return unwrapLongitudes(flat);
 }
 
 function addTiles(map) {
@@ -788,9 +1001,9 @@ function addTiles(map) {
   }).addTo(map);
 }
 
-function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom = 196, badges = false, intro = false } = {}) {
-  const routeLegs = legs?.length ? legs : letterLegs({ from, to });
-  const legPaths = sampleLegs(routeLegs);
+function mountRouteMap(container, from, to, { showPigeon = false, padBottom = 196, intro = false } = {}) {
+  const path = pigeonPath(from, to);
+  const latLngs = path.map((point) => [point.lat, point.lng]);
   const map = L.map(container, {
     zoomControl: false,
     attributionControl: true,
@@ -801,79 +1014,47 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
   });
   addTiles(map);
 
-  const legFlown = [];
-  routeLegs.forEach((leg, index) => {
-    const path = legPaths[index];
-    const latLngs = path.map((point) => [point.lat, point.lng]);
-    const ink = INK_LINE[leg.mode] || INK_LINE.plane;
-    const color = MODE_COLOR[leg.mode] || MODE_COLOR.plane;
-    L.polyline(latLngs, {
-      color,
-      weight: ink.weight,
-      opacity: 0.58,
-      dashArray: ink.rest,
-      lineCap: "round",
-      lineJoin: "round",
-      className: "ink-route",
-    }).addTo(map);
-    legFlown.push(L.polyline([], {
-      color,
-      weight: ink.flownWeight,
-      opacity: 0.94,
-      dashArray: ink.flown || undefined,
-      lineCap: "round",
-      lineJoin: "round",
-      className: "ink-route",
-    }).addTo(map));
-    if (badges) {
-      const mid = path[Math.floor(path.length / 2)];
-      L.marker([mid.lat, mid.lng], {
-        icon: L.divIcon({
-          className: "mode-badge",
-          html: `<span class="mode-badge-icon" style="background:${MODE_COLOR[leg.mode]}">${MODE_SVG[leg.mode]}</span>`,
-          iconSize: [22, 22],
-          iconAnchor: [11, 11],
-        }),
-        interactive: false,
-        zIndexOffset: 500,
-      }).addTo(map);
-    }
-    if (index > 0) {
-      L.marker([path[0].lat, path[0].lng], {
-        icon: L.divIcon({
-          className: "dot-icon",
-          html: `<span class="dot dot-hub"></span>`,
-          iconSize: [8, 8],
-          iconAnchor: [4, 4],
-        }),
-        interactive: false,
-      }).addTo(map);
-    }
-  });
+  L.polyline(latLngs, {
+    color: PIGEON_INK,
+    weight: 2.2,
+    opacity: 0.45,
+    dashArray: "2 7",
+    lineCap: "round",
+    lineJoin: "round",
+    className: "ink-route",
+  }).addTo(map);
+  const flown = L.polyline([], {
+    color: PIGEON_INK,
+    weight: 3.1,
+    opacity: 0.92,
+    lineCap: "round",
+    lineJoin: "round",
+    className: "ink-route",
+  }).addTo(map);
 
-  const dot = (color) => L.divIcon({
+  const dot = L.divIcon({
     className: "dot-icon",
-    html: `<span class="dot dot-origin" style="background:${color}"></span>`,
+    html: `<span class="dot dot-origin" style="background:${PIGEON_INK}"></span>`,
     iconSize: [12, 12],
     iconAnchor: [6, 6],
   });
-  const origin = legPaths[0][0];
-  const dest = legPaths[legPaths.length - 1][legPaths[legPaths.length - 1].length - 1];
-  L.marker([origin.lat, origin.lng], { icon: dot(MODE_COLOR[routeLegs[0].mode]), interactive: false })
+  const origin = path[0];
+  const dest = path[path.length - 1];
+  L.marker([origin.lat, origin.lng], { icon: dot, interactive: false })
     .bindTooltip(pinLabel(from), { permanent: true, direction: "left", className: "city-label", offset: [-8, 0] })
     .addTo(map);
-  L.marker([dest.lat, dest.lng], { icon: dot(MODE_COLOR[routeLegs[routeLegs.length - 1].mode]), interactive: false })
+  L.marker([dest.lat, dest.lng], { icon: dot, interactive: false })
     .bindTooltip(pinLabel(to), { permanent: true, direction: "right", className: "city-label", offset: [8, 0] })
     .addTo(map);
 
-  let plane = null;
-  if (showPlane) {
-    plane = L.marker([origin.lat, origin.lng], {
+  let pigeon = null;
+  if (showPigeon) {
+    pigeon = L.marker([origin.lat, origin.lng], {
       icon: L.divIcon({
-        className: "plane-wrap",
-        html: `<div class="plane-rot"><div class="courier-glyph">${MODE_SVG[routeLegs[0].mode]}</div></div>`,
-        iconSize: [42, 42],
-        iconAnchor: [21, 21],
+        className: "pigeon-mark",
+        html: pigeonHtml(),
+        iconSize: [96, 68],
+        iconAnchor: [40, 42],
       }),
       pane: "plane",
       interactive: false,
@@ -881,7 +1062,7 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
     }).addTo(map);
   }
 
-  const all = legPaths.flat().map((point) => [point.lat, point.lng]);
+  const all = latLngs;
   const bounds = L.latLngBounds(all);
   const fit = () => {
     map.invalidateSize();
@@ -900,18 +1081,16 @@ function mountRouteMap(container, from, to, { legs, showPlane = false, padBottom
     fit();
     requestAnimationFrame(fit);
   }
-  const first = legPaths[0];
-  const followPoint = first[Math.min(first.length - 1, Math.max(1, Math.round((first.length - 1) * 0.45)))];
+  const followPoint = path[Math.min(path.length - 1, Math.max(1, Math.round((path.length - 1) * 0.45)))];
   state.mapUnwrap = true;
   state.originLng = origin.lng;
   state.dots = new Map();
   container.__map = map;
   return {
     map,
-    legPaths,
-    legFlown,
-    plane,
-    legs: routeLegs,
+    path,
+    flown,
+    pigeon,
     originLng: origin.lng,
     bounds,
     originPoint: origin,
@@ -943,36 +1122,26 @@ function playDepartureCamera(map, origin, follow, bounds, padBottom) {
   return timers;
 }
 
-function renderLegend(id, legs, activeIndex) {
-  const root = $(id);
-  const key = `${legs.map((leg) => leg.mode).join("-")}:${activeIndex}`;
-  if (root.dataset.key === key) return;
-  root.dataset.key = key;
-  root.innerHTML = legs.map((leg, index) => {
-    const active = index === activeIndex ? " is-active" : "";
-    return `<span class="leg leg-${esc(leg.mode)}${active}"><i></i>${esc(MODE_LABEL[leg.mode])}</span>`;
-  }).join(`<span class="leg-arrow">→</span>`);
+function paintFlown(path, flown, progress) {
+  const n = Math.round(clamp(progress, 0, 1) * (path.length - 1));
+  flown.setLatLngs(path.slice(0, n + 1).map((point) => [point.lat, point.lng]));
 }
 
-function paintFlown(legPaths, legFlown, legs, elapsed) {
-  const loc = locateOnLegs(legs, elapsed);
-  legPaths.forEach((path, index) => {
-    let slice = [];
-    if (index < loc.legIndex) slice = path;
-    else if (index === loc.legIndex) {
-      const n = Math.round(loc.legFraction * (path.length - 1));
-      slice = path.slice(0, n + 1);
-    }
-    legFlown[index].setLatLngs(slice.map((point) => [point.lat, point.lng]));
-  });
-  return loc;
+function pointAlong(path, progress) {
+  const index = clamp(progress, 0, 1) * (path.length - 1);
+  const i = Math.floor(index);
+  const frac = index - i;
+  const a = path[i];
+  const b = path[Math.min(path.length - 1, i + 1)];
+  return {
+    lat: a.lat + (b.lat - a.lat) * frac,
+    lng: a.lng + (b.lng - a.lng) * frac,
+  };
 }
 
 function mountFlight(letter, { intro = false } = {}) {
-  const legs = letterLegs(letter);
   const view = mountRouteMap($("map"), letter.from, letter.to, {
-    legs,
-    showPlane: true,
+    showPigeon: true,
     padBottom: 250,
     intro,
   });
@@ -980,77 +1149,70 @@ function mountFlight(letter, { intro = false } = {}) {
   const cameraTimers = intro
     ? playDepartureCamera(view.map, view.originPoint, view.followPoint, view.bounds, view.padBottom)
     : [];
+  const ends = routeEnds(letter);
   state.flight = {
     letter,
-    legs,
-    legPaths: view.legPaths,
-    legFlown: view.legFlown,
-    plane: view.plane,
+    path: view.path,
+    flown: view.flown,
+    pigeon: view.pigeon,
     originLng: view.originLng,
-    shownMode: legs[0].mode,
-    lastBearing: bearingDegrees(legs[0].from.lat, legs[0].from.lng, legs[0].to.lat, legs[0].to.lng),
+    lastBearing: bearingDegrees(ends.from.lat, ends.from.lng, ends.to.lat, ends.to.lng),
     arrived: letter.status === "delivered",
-    seenLeg: null,
     cameraTimers,
     introUntil: intro ? Date.now() + 4300 : 0,
-    transferTimer: 0,
-    glanceTimer: 0,
   };
 }
 
-function setCourier(mode, position, bearing) {
-  const { plane, originLng } = state.flight;
-  plane.setLatLng([position.lat, alignLongitude(position.lng, originLng)]);
-  const root = plane.getElement();
-  if (!root) return;
-  const rot = root.querySelector(".plane-rot");
-  if (rot) rot.style.transform = `rotate(${bearing}deg)`;
-  if (state.flight.shownMode !== mode) {
-    state.flight.shownMode = mode;
-    const glyph = root.querySelector(".courier-glyph");
-    if (glyph) glyph.innerHTML = MODE_SVG[mode] || PLANE_SVG;
-  }
+function setPigeon(position, bearing) {
+  const { pigeon, originLng } = state.flight;
+  if (!pigeon) return;
+  pigeon.setLatLng([position.lat, alignLongitude(position.lng, originLng)]);
+  const root = pigeon.getElement();
+  const rot = root?.querySelector(".pigeon-rot");
+  if (rot) rot.style.transform = `rotate(${bearing - 90}deg)`;
 }
 
-function renderFlightHud(letter, progress, etaSeconds, loc) {
+function renderFlightHud(letter, progress) {
   setText("flight-route", routeLine(letter.from, letter.to));
-  const legs = state.flight?.legs || letterLegs(letter);
+  setText("flight-origin", `回郵地址 · ${originLabel(letter.from)}`);
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
   $("flight-sheet")?.classList.toggle("is-arrived", progress >= 1);
+  const dest = letter.to.city || letter.to.name;
   if (progress >= 1) {
-    setText("flight-mode", "已送到");
-    $("flight-mode").style.color = "";
-    renderLegend("flight-legend", legs, legs.length - 1);
+    setText("flight-mode", "信鴿已送到");
     setText("flight-eta", "已抵達");
     $("flight-countdown").hidden = true;
     setText("flight-remain", pinLabel(letter.to));
     $("btn-open").hidden = false;
     $("flight-track").hidden = true;
   } else {
-    const index = loc ? loc.legIndex : (letter.legIndex ?? 0);
-    const leg = legs[index] || legs[0];
-    setText("flight-mode", legProgressLine(leg, { index, count: legs.length }));
-    $("flight-mode").style.color = "";
-    renderLegend("flight-legend", legs, index);
+    setText("flight-mode", `信鴿在飛，前往${dest}`);
     $("flight-countdown").hidden = false;
     setText("flight-eta", formatArrival(letter.arrivesAt));
-    setText("flight-countdown", formatCountdown(etaSeconds));
-    const remain = loc ? loc.remainingKm : letter.remainingKm;
+    setText("flight-countdown", formatCountdown(Math.max(0, (Date.parse(letter.arrivesAt) - nowMs()) / 1000)));
+    const remain = Number.isFinite(letter.distanceKm) ? letter.distanceKm * (1 - progress) : letter.remainingKm;
     setText("flight-remain", `剩餘 ${formatDistance(remain)}`);
     $("btn-open").hidden = true;
     $("flight-track").hidden = false;
   }
 }
 
-function tripPosition(trip) {
+function tripFraction(trip) {
   const start = Date.parse(trip.departedAt);
   const end = Date.parse(trip.arrivesAt);
-  const span = Math.max(1, end - start) / 1000;
-  let elapsed = (nowMs() - start) / 1000;
+  const span = Math.max(1, end - start);
+  let elapsed = nowMs() - start;
   if (trip.kind === "background") elapsed = ((elapsed % span) + span) % span;
   else elapsed = clamp(elapsed, 0, span);
-  return locateOnLegs(trip.legs, elapsed);
+  return elapsed / span;
+}
+
+function tripPosition(trip) {
+  const ends = routeEnds(trip);
+  if (!ends) return null;
+  const t = tripFraction(trip);
+  return interpolate(ends.from.lat, ends.from.lng, ends.to.lat, ends.to.lng, t);
 }
 
 function markerLatLng(position) {
@@ -1063,10 +1225,10 @@ function paintTraffic() {
   const seen = new Set();
   for (const trip of state.trips || []) {
     if (state.flight?.letter?.id === trip.id) continue;
-    if (!trip.legs?.length) continue;
+    const position = tripPosition(trip);
+    if (!position) continue;
     seen.add(trip.id);
-    const loc = tripPosition(trip);
-    const latlng = markerLatLng(loc.position);
+    const latlng = markerLatLng(position);
     let marker = state.dots.get(trip.id);
     if (!marker) {
       marker = L.marker(latlng, {
@@ -1130,99 +1292,28 @@ function startAmbient(token) {
 function flightFrame(token) {
   const flight = state.flight;
   if (!flight || token !== renderToken) return;
-  const { letter, legs } = flight;
+  const { letter, path } = flight;
   const start = Date.parse(letter.departedAt);
   const end = Date.parse(letter.arrivesAt);
-  const span = Math.max(1, end - start) / 1000;
-  const elapsed = clamp((nowMs() - start) / 1000, 0, span);
-  const t = elapsed / span;
-  const loc = paintFlown(flight.legPaths, flight.legFlown, legs, elapsed);
-  const ahead = locateOnLegs(legs, Math.min(span, elapsed + span * 0.01));
-  if (haversineKm(loc.position.lat, loc.position.lng, ahead.position.lat, ahead.position.lng) > 0.001) {
-    flight.lastBearing = bearingDegrees(
-      loc.position.lat,
-      loc.position.lng,
-      ahead.position.lat,
-      ahead.position.lng,
-    );
+  const span = Math.max(1, end - start);
+  const t = clamp((nowMs() - start) / span, 0, 1);
+  paintFlown(path, flight.flown, t);
+  const here = pointAlong(path, t);
+  const ahead = pointAlong(path, Math.min(1, t + 0.01));
+  if (haversineKm(here.lat, here.lng, ahead.lat, ahead.lng) > 0.001) {
+    flight.lastBearing = bearingDegrees(here.lat, here.lng, ahead.lat, ahead.lng);
   }
-  setCourier(loc.mode, loc.position, flight.lastBearing);
-  noteLegChange(loc);
-  renderFlightHud(letter, t, Math.max(0, (end - nowMs()) / 1000), loc);
+  setPigeon(here, flight.lastBearing);
+  renderFlightHud(letter, t);
   paintTraffic();
   if (t >= 1) {
     if (!flight.arrived) {
       flight.arrived = true;
-      hideTransfer();
       api(`/api/letters/${letter.id}`).catch(() => {});
     }
     return;
   }
   state.raf = requestAnimationFrame(() => flightFrame(token));
-}
-
-function hideTransfer() {
-  const banner = $("transfer-banner");
-  if (!banner) return;
-  banner.hidden = true;
-  banner.classList.remove("is-on");
-}
-
-function presentTransfer(beat, hubPoint) {
-  const flight = state.flight;
-  if (!flight || !beat) return;
-  const banner = $("transfer-banner");
-  $("transfer-kicker").textContent = beat.hub;
-  $("transfer-title").textContent = beat.title;
-  $("transfer-mark").textContent = MODE_LABEL[beat.mode] || "";
-  banner.hidden = false;
-  banner.classList.remove("is-on");
-  void banner.offsetWidth;
-  banner.classList.add("is-on");
-  if (flight.transferTimer) clearTimeout(flight.transferTimer);
-  flight.transferTimer = setTimeout(() => {
-    banner.hidden = true;
-    banner.classList.remove("is-on");
-  }, 3400);
-  const root = flight.plane?.getElement();
-  if (root) {
-    root.classList.add("is-transfer");
-    setTimeout(() => root.classList.remove("is-transfer"), 900);
-  }
-  glanceAtHub(hubPoint);
-}
-
-function glanceAtHub(point) {
-  const flight = state.flight;
-  const map = state.map;
-  if (!map || !flight || !point) return;
-  if (flight.introUntil && Date.now() < flight.introUntil) return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  if (flight.glanceTimer) clearTimeout(flight.glanceTimer);
-  const zoom = map.getZoom();
-  const center = map.getCenter();
-  const back = [center.lat, center.lng];
-  const nextZoom = Math.min(9, Math.max(zoom + 1.6, 7));
-  map.flyTo([point.lat, alignLongitude(point.lng, flight.originLng)], nextZoom, { duration: 0.7 });
-  flight.glanceTimer = setTimeout(() => {
-    if (state.map !== map) return;
-    map.flyTo(back, zoom, { duration: 0.85 });
-  }, 1700);
-}
-
-function noteLegChange(loc) {
-  const flight = state.flight;
-  if (!flight || loc.legIndex == null) return;
-  if (flight.seenLeg == null) {
-    flight.seenLeg = loc.legIndex;
-    return;
-  }
-  if (loc.legIndex <= flight.seenLeg) return;
-  flight.seenLeg = loc.legIndex;
-  const prev = flight.legs[loc.legIndex - 1];
-  const next = flight.legs[loc.legIndex];
-  const beat = transferBeat(prev, next);
-  if (beat) presentTransfer(beat, next.from);
 }
 
 async function showFlight(id, token, params) {
@@ -1238,13 +1329,7 @@ async function showFlight(id, token, params) {
   $("btn-open").onclick = () => navigate(`#/read/${id}`);
   mountFlight(letter, { intro });
   if (intro) history.replaceState(null, "", `#/flight/${id}`);
-  const legs = letterLegs(letter);
-  const elapsed = letter.departedAt
-    ? clamp((nowMs() - Date.parse(letter.departedAt)) / 1000, 0, letter.durationSeconds || 1)
-    : 0;
-  const loc = locateOnLegs(legs, elapsed);
-  if (state.flight) state.flight.seenLeg = loc.legIndex;
-  renderFlightHud(letter, letter.progress, letter.etaSeconds || 0, loc);
+  renderFlightHud(letter, letter.progress || 0);
   state.raf = requestAnimationFrame(() => flightFrame(token));
   loadActivity().catch(() => {});
   state.poll = setInterval(async () => {
@@ -1282,7 +1367,8 @@ async function showRead(id, token) {
   const dest = letter.to.city || letter.to.name;
   const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
   $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
-  $("postmark-place").textContent = dest;
+  $("postmark-place").textContent = letter.from.name;
+  $("envelope-return").textContent = `寄自 ${originLabel(letter.from)}`;
   $("postmark-time").textContent = formatPostalDate(arrivedAt);
   fillAftertaste(letter);
   let started = false;
@@ -1306,23 +1392,14 @@ async function showRead(id, token) {
   if (img.complete) go();
 }
 
-function countWord(n) {
-  return ["零", "一", "兩", "三", "四", "五", "六", "七", "八", "九"][n] || String(n);
-}
-
 function fillAftertaste(letter) {
-  const legs = letterLegs(letter);
   const seconds = Number(letter.durationSeconds) || 0;
-  const names = legs.map((leg) => MODE_LABEL[leg.mode] || "").filter(Boolean);
-  const sequence = names.join("、");
-  const transfers = Math.max(0, names.length - 1);
   const km = formatDistance(letter.distanceKm);
-  const detail = transfers === 0
-    ? `${km}，${sequence}一段，沒有轉運。`
-    : `${km}，中途轉了${countWord(transfers)}次：${sequence}。`;
+  const from = letter.from?.name || "";
+  const to = letter.to?.city || letter.to?.name || "";
   $("read-after").innerHTML =
     `<p class="after-warm">這封信在路上 <b>${esc(formatSpan(seconds))}</b>。</p>` +
-    `<p>${esc(detail)}</p>`;
+    `<p>${esc(`信鴿從${from}飛到${to}，${km}。`)}</p>`;
 }
 
 function settleCeremony() {
@@ -1358,39 +1435,21 @@ function presentDraw(quote) {
   state.fromId = quote.from.id;
   state.toId = quote.to.id;
   showOnly("draw");
-  const legs = letterLegs(quote);
   setText("draw-name", quote.to.name);
   setText("draw-where", whereLine(quote.to));
   setText("draw-meta", `從${quote.from.name}寄出 · ${formatDistance(quote.distanceKm)} · 約 ${formatSpan(quote.durationSeconds)}`);
-  setText("draw-via", legVia(legs));
-  renderLegend("draw-legend", legs, -1);
-  paintSenderChips();
+  setText("draw-via", "信鴿沿著這一條線飛過去");
+  setText("draw-origin", `寄自 ${originLabel(quote.from)}`);
   $("btn-write").disabled = quote.to.cityId === quote.from.id;
   clearMap();
   const view = mountRouteMap($("draw-map"), quote.from, quote.to, {
-    legs,
-    showPlane: false,
-    padBottom: 300,
-    badges: true,
+    padBottom: 280,
   });
   state.map = view.map;
 }
 
-async function changeDrawSender(cityId) {
-  if (!state.recipient || cityId === state.fromId) return;
-  try {
-    const quote = await api(routeUrl(cityId, state.recipient.id));
-    const next = `#/draw?id=${encodeURIComponent(quote.to.id)}&from=${encodeURIComponent(quote.from.id)}`;
-    if (location.hash !== next) history.replaceState(null, "", next);
-    presentDraw(quote);
-  } catch (err) {
-    showToast(err.message);
-    paintSenderChips();
-  }
-}
-
 async function showDraw(params, token) {
-  const fromId = params.get("from") || "taipei";
+  const fromId = state.originId;
   if (!params.get("id")) {
     const payload = { fromId, pace: state.pace };
     if (params.get("exclude")) payload.excludeId = params.get("exclude");
@@ -1399,7 +1458,7 @@ async function showDraw(params, token) {
       body: JSON.stringify(payload),
     });
     if (token !== renderToken) return;
-    const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+    const next = `#/draw?id=${encodeURIComponent(draw.to.id)}`;
     if (location.hash !== next) location.replace(next);
     return;
   }
@@ -1413,14 +1472,14 @@ async function showDraw(params, token) {
 
 async function redrawRecipient() {
   const excludeId = state.recipient?.id;
-  const fromId = state.fromId || "taipei";
+  const fromId = state.originId;
   const payload = { fromId, pace: state.pace };
   if (excludeId) payload.excludeId = excludeId;
   const draw = await api("/api/recipients/draw", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  const next = `#/draw?id=${encodeURIComponent(draw.to.id)}&from=${encodeURIComponent(draw.from.id)}`;
+  const next = `#/draw?id=${encodeURIComponent(draw.to.id)}`;
   if (location.hash === next) presentDraw(draw);
   else location.replace(next);
 }
@@ -1430,8 +1489,18 @@ async function render() {
   const { parts, params } = parseHash();
   const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
   if (!keepPost) cancelPost();
+  closePostSlip();
   stopLoops();
   try {
+    if (!state.originId) {
+      if (parts[0] !== "region") state.afterRegion = location.hash || "#/";
+      showRegion("register");
+      return;
+    }
+    if (parts[0] === "region") {
+      showRegion("settings");
+      return;
+    }
     if (parts[0] === "compose") {
       await openCompose(params, token);
     } else if (parts[0] === "draw") {
@@ -1460,20 +1529,29 @@ async function render() {
 }
 
 async function boot() {
-  buildPlaceChips();
-  buildPresets();
+  buildRegionList();
   bindCanvas();
+  const profile = readSenderProfile();
+  state.originId = profile?.originId || null;
+  state.senderId = profile?.senderId || null;
+  state.fromId = state.originId;
+  paintRegionLink();
+  $("btn-region").addEventListener("click", () => navigate("#/region"));
+  $("region-back").addEventListener("click", () => navigate("#/"));
+  $("btn-region-save").addEventListener("click", saveRegion);
+  $("btn-slip-back").addEventListener("click", closePostSlip);
+  $("btn-slip-confirm").addEventListener("click", () => submitLetter(true));
   $("btn-draw").addEventListener("click", () => navigate("#/draw"));
   $("btn-redraw").addEventListener("click", () => {
     redrawRecipient().catch((err) => showToast(err.message));
   });
   $("btn-write").addEventListener("click", () => {
     if (!state.recipient) return;
-    navigate(`#/compose?from=${encodeURIComponent(state.fromId)}&to=${encodeURIComponent(state.recipient.id)}`);
+    navigate(`#/compose?to=${encodeURIComponent(state.recipient.id)}`);
   });
   $("btn-change-recipient").addEventListener("click", () => {
     if (!state.recipient) return;
-    navigate(`#/draw?from=${encodeURIComponent(state.fromId)}&exclude=${encodeURIComponent(state.recipient.id)}`);
+    navigate(`#/draw?exclude=${encodeURIComponent(state.recipient.id)}`);
   });
   $("compose-back").addEventListener("click", () => navigate("#/"));
   $("draw-back").addEventListener("click", () => navigate("#/"));
@@ -1483,7 +1561,7 @@ async function boot() {
     state.ceremonySkip = true;
     settleCeremony();
   });
-  $("btn-send").addEventListener("click", () => submitLetter(true));
+  $("btn-send").addEventListener("click", () => openPostSlip());
   $("btn-save").addEventListener("click", () => submitLetter(false));
   $("btn-undo").addEventListener("click", undoStroke);
   $("btn-clear").addEventListener("click", clearCanvas);

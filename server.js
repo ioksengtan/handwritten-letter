@@ -5,8 +5,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "./lib/store.js";
 import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/flight.js";
-import { PLACES, PRESETS, findPlace } from "./shared/places.js";
+import { findPlace } from "./shared/places.js";
 import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
+import { normalizeSenderId } from "./shared/profile.js";
+import { quotaFullError, quotaSnapshot } from "./shared/quota.js";
 import { backgroundPlans, backgroundSnapshots, planCourier } from "./shared/route.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -114,20 +116,10 @@ function toPublic(letter, nowMs) {
     legs: letter.legs || null,
     mode: flight.mode,
     legIndex: flight.legIndex,
+    senderId: letter.senderId || null,
     serverNow: new Date(nowMs).toISOString(),
     imageUrl: imageVisible ? `/api/letters/${letter.id}/image` : null,
   };
-}
-
-function legsOf(letter) {
-  if (Array.isArray(letter.legs) && letter.legs.length) return letter.legs;
-  return [{
-    mode: "plane",
-    from: { name: letter.from.name, lat: letter.from.lat, lng: letter.from.lng },
-    to: { name: letter.to.name, lat: letter.to.lat, lng: letter.to.lng },
-    distanceKm: letter.distanceKm,
-    durationSeconds: letter.durationSeconds || 1,
-  }];
 }
 
 export function createApp({
@@ -196,14 +188,6 @@ export function createApp({
     res.json({ ok: true, pace: paceFallback });
   });
 
-  app.get("/api/places", (req, res) => {
-    res.json(PLACES);
-  });
-
-  app.get("/api/presets", (req, res) => {
-    res.json(PRESETS);
-  });
-
   app.get("/api/recipients", (req, res) => {
     res.json(RECIPIENTS);
   });
@@ -236,7 +220,8 @@ export function createApp({
       ...letters.filter((letter) => letter.status === "in_flight").map((letter) => ({
         id: letter.id,
         kind: "yours",
-        legs: legsOf(letter),
+        from: letter.from,
+        to: letter.to,
         departedAt: letter.departedAt,
         arrivesAt: letter.arrivesAt,
       })),
@@ -273,6 +258,38 @@ export function createApp({
     fs.createReadStream(abs).pipe(res);
   });
 
+  function readSenderId(raw) {
+    if (raw == null || raw === "") return { senderId: null };
+    const senderId = normalizeSenderId(raw);
+    if (!senderId) return { error: "寄件人編號無法辨認", status: 400 };
+    return { senderId };
+  }
+
+  function guardInFlight(senderId, nowMs) {
+    const id = readSenderId(senderId);
+    if (id.error) return id;
+    if (!id.senderId) return { error: "請帶上寄件人編號", status: 400 };
+    const letters = persistArrivals(nowMs);
+    const quota = quotaSnapshot(letters, id.senderId);
+    if (!quota.full) return { senderId: id.senderId };
+    return {
+      error: quotaFullError(quota.limit),
+      status: 409,
+      limit: quota.limit,
+      inFlight: quota.inFlight,
+      soonestArrivesAt: quota.soonestArrivesAt,
+    };
+  }
+
+  function quotaBody(result) {
+    return {
+      error: result.error,
+      limit: result.limit,
+      inFlight: result.inFlight,
+      soonestArrivesAt: result.soonestArrivesAt,
+    };
+  }
+
   function applyImage(letterId, imageDataUrl) {
     const parsed = parseDataUrl(imageDataUrl);
     if (!parsed) return { error: "請附上信面圖片" };
@@ -288,8 +305,17 @@ export function createApp({
     const image = applyImage(id, body.imageDataUrl);
     if (image.error) return res.status(400).json({ error: image.error });
     const nowMs = now();
-    const timestamp = new Date(nowMs).toISOString();
+    const sender = readSenderId(body.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
     const launch = Boolean(body.launch);
+    if (launch) {
+      const gate = guardInFlight(sender.senderId, nowMs);
+      if (gate.error) {
+        const status = gate.status || 409;
+        return res.status(status).json(gate.limit ? quotaBody(gate) : { error: gate.error });
+      }
+    }
+    const timestamp = new Date(nowMs).toISOString();
     let letter = {
       id,
       status: "draft",
@@ -299,6 +325,7 @@ export function createApp({
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
+      senderId: sender.senderId,
       imageFile: image.imageFile,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -334,6 +361,8 @@ export function createApp({
       paceFallback,
     );
     if (geo.error) return res.status(400).json({ error: geo.error });
+    const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
     let imageFile = existing.imageFile;
     if (body.imageDataUrl) {
       const image = applyImage(existing.id, body.imageDataUrl);
@@ -347,6 +376,7 @@ export function createApp({
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
+      senderId: sender.senderId,
       imageFile,
       updatedAt: new Date(nowMs).toISOString(),
     });
@@ -375,6 +405,13 @@ export function createApp({
       imageFile = image.imageFile;
     }
     if (!imageFile) return res.status(400).json({ error: "請附上信面圖片" });
+    const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    const gate = guardInFlight(sender.senderId, nowMs);
+    if (gate.error) {
+      const status = gate.status || 409;
+      return res.status(status).json(gate.limit ? quotaBody(gate) : { error: gate.error });
+    }
     const departed = new Date(nowMs);
     const letter = store.update(existing.id, {
       status: "in_flight",
@@ -384,6 +421,7 @@ export function createApp({
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
+      senderId: gate.senderId,
       imageFile,
       departedAt: departed.toISOString(),
       arrivesAt: new Date(departed.getTime() + geo.durationSeconds * 1000).toISOString(),

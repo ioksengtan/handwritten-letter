@@ -2,8 +2,8 @@ import { haversineKm } from "./flight.js";
 
 /**
  * Demo Postcrossing-style pool. One person per real city.
- * cityId matches a sender pin. taipei and tokyo use the same coordinates
- * as the preset places.
+ * cityId matches a sender pin. Taipei and Tokyo use the same coordinates
+ * as the landmark pins kept for letters mailed before those routes left the page.
  */
 export const RECIPIENTS = [
   { id: "yu-an", name: "郁安", cityId: "taipei", city: "台北", country: "台灣", continent: "亞洲", lat: 25.047924, lng: 121.517081 },
@@ -32,6 +32,7 @@ export const CITIES = RECIPIENTS.map((recipient) => ({
   id: recipient.cityId,
   name: recipient.city,
   country: recipient.country,
+  continent: recipient.continent,
   lat: recipient.lat,
   lng: recipient.lng,
 }));
