@@ -23,8 +23,26 @@
         <div class="scroll">
           <header class="topbar">
             <h1>在路上</h1>
-            <button type="button" class="region-link" id="btn-region" hidden>我的地區</button>
+            <div class="top-links">
+              <button type="button" class="region-link" id="btn-passport">郵戳護照</button>
+              <button type="button" class="region-link" id="btn-region" hidden>我的地區</button>
+            </div>
           </header>
+          <div id="draft-banner" class="draft-banner" hidden>
+            <p id="draft-prompt"></p>
+            <p id="draft-who" class="draft-who"></p>
+            <div id="draft-ask" class="draft-actions">
+              <button type="button" class="btn" id="btn-draft-resume">接著寫</button>
+              <button type="button" class="btn" id="btn-draft-discard">丟棄草稿</button>
+            </div>
+            <div id="draft-confirm-row" hidden>
+              <p id="draft-confirm"></p>
+              <div class="draft-actions">
+                <button type="button" class="btn" id="btn-draft-no">先留著</button>
+                <button type="button" class="btn" id="btn-draft-yes">確定丟掉</button>
+              </div>
+            </div>
+          </div>
           <div class="activity">
             <p id="travel-count"></p>
             <div id="home-map" class="aged-map"></div>
@@ -138,6 +156,7 @@
           <p class="countdown" id="flight-countdown"></p>
           <p class="remain" id="flight-remain"></p>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
+          <button type="button" class="text-btn back-open" id="btn-envelope-back">信封背面</button>
           <button type="button" class="btn primary" id="btn-open" hidden>拆信</button>
         </div>
       </section>
@@ -174,10 +193,35 @@
               <button type="button" id="ceremony-skip" class="ceremony-hit" aria-label="拆開這封信"></button>
             </div>
             <p class="caption" id="read-caption"></p>
+            <button type="button" class="text-btn back-open" id="btn-read-envelope">信封背面</button>
             <div class="aftertaste" id="read-after"></div>
           </div>
         </div>
       </section>
+      <section id="view-passport" class="view" hidden>
+        <div class="scroll">
+          <header class="topbar">
+            <button type="button" class="icon-btn" id="passport-back" aria-label="返回">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <h1>郵戳護照</h1>
+          </header>
+          <p class="passport-lede" id="passport-lede"></p>
+          <div id="passport-stamps" class="stamp-sheet"></div>
+        </div>
+      </section>
+      <div id="envelope-back" class="envelope-back" hidden>
+        <div class="back-paper" role="dialog" aria-modal="true" aria-labelledby="back-title">
+          <p class="slip-kicker">信封背面</p>
+          <h2 id="back-title">沿途郵戳</h2>
+          <p class="back-route" id="back-route"></p>
+          <p class="back-note" id="back-note"></p>
+          <div id="back-stamps" class="stamp-sheet"></div>
+          <button type="button" class="btn" id="btn-back-close">蓋上</button>
+        </div>
+      </div>
       <div id="post-slip" class="counter-slip" hidden>
         <div class="slip-paper" role="dialog" aria-modal="true" aria-labelledby="slip-title">
           <p class="slip-kicker">郵局櫃檯</p>
@@ -199,6 +243,7 @@
             <div>
               <dt>預計抵達</dt>
               <dd id="slip-when"></dd>
+              <dd class="slip-local" id="slip-local" hidden></dd>
               <dd class="slip-span" id="slip-span"></dd>
             </div>
           </dl>

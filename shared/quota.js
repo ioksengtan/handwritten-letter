@@ -1,10 +1,11 @@
 import { normalizeSenderId } from "./profile.js";
 
 /**
- * Traveling slots follow Postcrossing's public table, then stop at 10.
+ * 參考 Postcrossing，上限 10 封。
  * https://www.postcrossing.com/help/how-many-postcards-can-i-send
- * Their table keeps growing (one more slot each 50 sent, up to 100 traveling).
- * Ours never goes past 10. There is no expiry: a letter always arrives.
+ * The steps below match that public table only up to ten letters in flight.
+ * Postcrossing's own maximum is 100 traveling. Ten is our cap, not their rule.
+ * There is no expiry: a letter always arrives.
  *
  * Delivered 0–4 → 5, 5–14 → 6, 15–24 → 7, 25–34 → 8, 35–49 → 9, 50+ → 10.
  */
