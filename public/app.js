@@ -1034,7 +1034,11 @@ function bindCanvas() {
     if (!state.ctx) return;
     event.preventDefault();
     drawing = true;
-    canvas.setPointerCapture(event.pointerId);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      /* an untrusted pointer cannot be captured; the stroke still counts */
+    }
     pushUndo();
     last = point(event);
     state.ctx.beginPath();
