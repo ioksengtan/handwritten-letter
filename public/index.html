@@ -14,6 +14,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/friend.css" />
   </head>
   <body>
     <div id="app">
@@ -52,8 +53,9 @@
           <p id="home-incoming" class="mail-hint" hidden></p>
           <div id="home-letters"></div>
         </div>
-        <div class="dock">
-          <button type="button" class="btn primary" id="btn-draw">抽一位隨機收件人</button>
+        <div class="dock dock-pair">
+          <button type="button" class="btn" id="btn-draw">抽一位隨機收件人</button>
+          <button type="button" class="btn primary" id="btn-friend">寄給一位朋友</button>
         </div>
       </section>
 
@@ -96,6 +98,31 @@
         </div>
         <div class="dock">
           <button type="button" class="btn primary" id="btn-region-save" disabled>設為我的地區</button>
+        </div>
+      </section>
+
+      <section id="view-friend" class="view has-dock" hidden>
+        <div class="scroll">
+          <header class="topbar">
+            <button type="button" class="icon-btn" id="friend-back" aria-label="返回">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <h1>寄給一位朋友</h1>
+          </header>
+          <p class="region-lede">寫下朋友的稱呼，再選對方所在的城市。可以從名單點，也可以在地圖上點。</p>
+          <label class="friend-name">
+            <span>朋友的稱呼</span>
+            <input id="friend-name" name="friend-name" maxlength="24" autocomplete="off" placeholder="例如：小安" />
+          </label>
+          <div id="friend-map" class="aged-map region-map"></div>
+          <p class="region-picked" id="friend-picked">在地圖上點一個城市，或從下面的名單選。</p>
+          <p class="friend-preview" id="friend-preview"></p>
+          <div id="friend-list"></div>
+        </div>
+        <div class="dock">
+          <button type="button" class="btn primary" id="btn-friend-write" disabled>寫給這位</button>
         </div>
       </section>
 
@@ -182,11 +209,20 @@
           <p class="travel-count" id="flight-travel"></p>
           <p class="route" id="flight-route"></p>
           <p class="return-address" id="flight-origin"></p>
+          <div id="flight-handoff" class="handoff" hidden>
+            <p class="handoff-title" id="handoff-title"></p>
+            <p class="handoff-link" id="handoff-link"></p>
+            <button type="button" class="btn" id="btn-copy-link">複製連結</button>
+            <p class="handoff-note" id="handoff-note"></p>
+            <p class="handoff-share" id="handoff-share" hidden></p>
+            <button type="button" class="text-btn" id="btn-copy-share" hidden>複製分享頁連結</button>
+          </div>
           <p class="mode-now" id="flight-mode"></p>
           <p class="eta" id="flight-eta"></p>
           <p class="countdown" id="flight-countdown"></p>
           <p class="remain" id="flight-remain"></p>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
+          <p class="handoff-note" id="flight-open-note" hidden>送到之後十四天內可以拆信。</p>
           <button type="button" class="text-btn back-open" id="btn-envelope-back">信封背面</button>
           <button type="button" class="btn primary" id="btn-open" hidden>拆信</button>
         </div>
@@ -242,6 +278,9 @@
                 </div>
               </div>
             </div>
+            <p class="read-invite" id="read-invite" hidden>
+              <a href="/">也寄一封給遠方的陌生人</a>
+            </p>
           </div>
         </div>
       </section>
@@ -257,6 +296,15 @@
           </header>
           <p class="region-lede">寄給你的信在這裡。還在路上的不能先看，只看得到預計哪一天到。</p>
           <div id="mailbox-list"></div>
+        </div>
+      </section>
+      <section id="view-returned" class="view" hidden>
+        <div class="returned-wrap">
+          <article class="returned-slip">
+            <p class="slip-kicker">郵局</p>
+            <h1 id="returned-title">這封信已經退回郵局</h1>
+            <p id="returned-detail">送到之後過了十四天，這條連結就收回了。</p>
+          </article>
         </div>
       </section>
       <section id="view-passport" class="view" hidden>
