@@ -44,7 +44,7 @@ import { INVITE_LINE, RETURNED_DETAIL, RETURNED_NOTE, isPublicToken } from "/sha
 import { browserTimeZone, formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
 const PAPER = "#fffdf8";
-const INK = "#2a4a8a";
+const INK = "#1c3148";
 const PIGEON_INK = "#6e342e";
 const PIGEON_SHAPES = `
   <path fill="none" stroke-width="2.6" stroke-linecap="round" d="M18 34c2-3 6-2 7 1M22 18c3-2 7 0 6 3M92 16c3 1 5 4 3 6M100 36c1 3-1 6-4 5M96 62c-3 2-7 1-8-2M34 68c-4 1-7-2-6-5M12 54c-2 2-5 1-6-2"/>
@@ -511,18 +511,23 @@ function renderHomeList(letters) {
       const route = esc(routeLine(letter.from, letter.to));
       let detail = "草稿";
       let extra = "";
+      let stamp = `<span class="date-stamp date-stamp-draft"><b>草稿</b></span>`;
       if (letter.status === "in_flight") {
         const when = formatArrival(letter.arrivesAt);
         const due = when ? ` · 預計 ${esc(when)}` : "";
-        detail = `信鴿在飛 · 剩餘 ${esc(formatDistance(letter.remainingKm))} · ${esc(formatCountdown(letter.etaSeconds))}${due}`;
+        detail = `信鴿在飛 · 剩餘 ${esc(formatDistance(letter.remainingKm))}${due}`;
         extra = `<span class="mini-track"><span style="width:${Math.round(letter.progress * 100)}%"></span></span>`;
+        stamp = `<span class="date-stamp"><b>${esc(formatCountdown(letter.etaSeconds))}</b></span>`;
       } else if (letter.status === "awaiting_receipt") {
         detail = WAITING_RECEIPT;
+        stamp = `<span class="date-stamp date-stamp-arrived"><b>待收</b></span>`;
       } else if (letter.status === "delivered") {
         detail = "已抵達 · 拆信";
+        stamp = `<span class="date-stamp date-stamp-arrived"><b>已抵達</b><small>拆信</small></span>`;
       }
       return `<button type="button" class="card" data-id="${esc(letter.id)}" data-status="${esc(letter.status)}">
-        <span><b>${route}</b><small>${detail}</small>${extra}</span>
+        <span class="card-copy"><b>${route}</b><small>${detail}</small>${extra}</span>
+        ${stamp}
       </button>`;
     }).join("");
     return `<section class="group"><h2>${group.title}</h2>${cards}</section>`;
@@ -2167,7 +2172,7 @@ async function showMailbox(token) {
   if (flying.length) {
     const cards = flying.map((letter) => {
       const who = `${esc(letter.from?.name || "有人")} · ${esc(letter.from?.city || "")}`;
-      return `<div class="card card-static"><span><b>${who}</b><small>${esc(flyingNotice(formatCalendarDay(letter.arrivesAt)))}</small></span></div>`;
+      return `<div class="card card-static"><span class="card-copy"><b>${who}</b><small>${esc(flyingNotice(formatCalendarDay(letter.arrivesAt)))}</small></span><span class="date-stamp"><b>飛來</b></span></div>`;
     }).join("");
     blocks.push(`<section class="group"><h2>飛來</h2>${cards}</section>`);
   }
@@ -2175,7 +2180,10 @@ async function showMailbox(token) {
     const cards = landed.map((letter) => {
       const who = `${esc(letter.from?.name || "")} · ${esc(letter.from?.city || "")}`;
       const detail = letter.status === "awaiting_receipt" ? "已送到，可以拆信" : "已收到";
-      return `<button type="button" class="card" data-id="${esc(letter.id)}"><span><b>${who}</b><small>${detail}</small></span></button>`;
+      const stamp = letter.status === "awaiting_receipt"
+        ? `<span class="date-stamp"><b>可拆</b></span>`
+        : `<span class="date-stamp date-stamp-arrived"><b>已收到</b></span>`;
+      return `<button type="button" class="card" data-id="${esc(letter.id)}"><span class="card-copy"><b>${who}</b><small>${detail}</small></span>${stamp}</button>`;
     }).join("");
     blocks.push(`<section class="group"><h2>已送到</h2>${cards}</section>`);
   }
