@@ -1775,3 +1775,183 @@ button:focus-visible {
   color: var(--stamp);
   font-family: var(--serif);
 }
+
+.identity-card {
+  margin: 8px 16px 20px;
+  padding: 16px 16px 18px;
+  background-color: var(--stock);
+  background-image: var(--paper-grain);
+  border: 1px solid rgba(122, 52, 46, 0.42);
+}
+
+.identity-card .region-lede {
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.nick-field {
+  display: block;
+  font-family: var(--serif);
+  letter-spacing: 0.16em;
+  color: var(--stamp);
+  font-size: 14px;
+}
+
+#nickname-input {
+  width: 100%;
+  margin-top: 6px;
+  border: none;
+  border-bottom: 1px solid rgba(122, 52, 46, 0.55);
+  background: transparent;
+  font-family: var(--serif);
+  font-size: 22px;
+  padding: 8px 0;
+}
+
+#nickname-input:focus {
+  outline: none;
+  border-bottom-color: var(--stamp);
+}
+
+.age-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  font-family: var(--serif);
+  font-size: 18px;
+  letter-spacing: 0.06em;
+}
+
+.age-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--stamp);
+}
+
+.age-note,
+.identity-error {
+  margin: 8px 0 0;
+  font-family: var(--serif);
+  line-height: 1.55;
+}
+
+.age-note { color: var(--stamp); }
+
+.identity-error { color: #6e342e; }
+
+.note-field {
+  display: block;
+  margin: 14px 20px 0;
+}
+
+.note-field span {
+  font-family: var(--serif);
+  letter-spacing: 0.16em;
+  color: var(--stamp);
+  font-size: 14px;
+}
+
+.note-field textarea {
+  width: 100%;
+  margin-top: 6px;
+  min-height: 84px;
+  border: none;
+  resize: vertical;
+  padding: 4px 8px 8px;
+  background-color: var(--paper);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 27px,
+    rgba(122, 52, 46, 0.18) 28px
+  );
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 28px;
+}
+
+.note-field textarea:focus { outline: 1px solid rgba(122, 52, 46, 0.35); }
+
+.demo-mark {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 2px 8px;
+  border: 1.5px solid var(--stamp);
+  color: var(--stamp);
+  font-family: var(--serif);
+  letter-spacing: 0.14em;
+  font-size: 14px;
+}
+
+.demo-note {
+  margin: 0 0 8px;
+  color: #6a5646;
+  font-family: var(--serif);
+  line-height: 1.5;
+}
+
+.mail-hint {
+  margin: 8px 16px 0;
+  color: var(--oxblood);
+  font-family: var(--serif);
+  line-height: 1.55;
+}
+
+.card-static { cursor: default; }
+
+.contact-reasons p {
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
+
+#contact-stop .btn {
+  width: 100%;
+  margin-top: 8px;
+  border-radius: 2px;
+  border-color: rgba(122, 52, 46, 0.45);
+  background: #f7f1e6;
+  color: var(--stamp);
+  font-family: var(--serif);
+}
+
+.read-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background-color: var(--paper);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 27px,
+    rgba(122, 52, 46, 0.16) 28px
+  );
+  font-family: var(--serif);
+  line-height: 28px;
+  white-space: pre-wrap;
+}
+
+.read-actions {
+  margin-top: 16px;
+}
+
+.read-actions .btn.primary { width: 100%; }
+
+.received-note,
+#safety-copy {
+  margin: 10px 0 0;
+  font-family: var(--serif);
+  line-height: 1.55;
+  color: #3f342c;
+}
+
+.read-safety {
+  display: flex;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.read-safety .text-btn {
+  color: var(--oxblood);
+  font-family: var(--serif);
+  letter-spacing: 0.12em;
+}

@@ -49,6 +49,15 @@ test("only this sender's in-flight letters fill the slots", () => {
   assert.equal(quotaSnapshot(letters, "browser-sender-02").delivered, 1);
   assert.equal(quotaSnapshot(letters, null).inFlight, 0);
   assert.equal(quotaSnapshot(letters, null).delivered, 0);
+
+  const waiting = quotaSnapshot([
+    letter({ status: "awaiting_receipt" }),
+    letter({ status: "delivered" }),
+  ], "browser-sender-01");
+  assert.equal(waiting.inFlight, 1);
+  assert.equal(waiting.awaitingReceipt, 1);
+  assert.equal(waiting.delivered, 1);
+  assert.equal(waiting.full, false);
 });
 
 test("each delivered-count boundary sets the slot count and fifty is the cap of ten", () => {

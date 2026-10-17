@@ -275,6 +275,18 @@ export function describeFlight(letter, nowMs) {
     };
   }
 
+  if (letter.status === "awaiting_receipt") {
+    return {
+      status: "awaiting_receipt",
+      progress: 1,
+      position: dest,
+      remainingKm: 0,
+      etaSeconds: 0,
+      mode: "pigeon",
+      legIndex: null,
+    };
+  }
+
   const start = Date.parse(letter.departedAt);
   const end = Date.parse(letter.arrivesAt);
   const span = Math.max(1, end - start);

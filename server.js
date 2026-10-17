@@ -3,12 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stripImageMeta } from "./lib/image-meta.js";
 import { createStore } from "./lib/store.js";
+import { contactRefusal } from "./shared/contact.js";
 import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/flight.js";
+import { awaitsReceipt } from "./shared/mailbox.js";
+import { personRecipient, pickPerson, sameHomeCity } from "./shared/matching.js";
 import { findPlace } from "./shared/places.js";
-import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
-import { normalizeSenderId } from "./shared/profile.js";
+import { AGE_REQUIRED, normalizeNickname, normalizeSenderId } from "./shared/profile.js";
 import { quotaFullError, quotaSnapshot } from "./shared/quota.js";
+import { RECIPIENTS, findCity, findRecipient, pickRecipient } from "./shared/recipients.js";
 import { backgroundPlans, backgroundSnapshots, planCourier } from "./shared/route.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -43,20 +47,24 @@ function senderFromId(id) {
   return { id: place.id, name: place.name, country: place.country, lat: place.lat, lng: place.lng };
 }
 
-function destinationFromId(id) {
+function demoDestination(recipient) {
+  return {
+    id: recipient.id,
+    name: recipient.name,
+    city: recipient.city,
+    cityId: recipient.cityId,
+    country: recipient.country,
+    continent: recipient.continent,
+    lat: recipient.lat,
+    lng: recipient.lng,
+    demo: true,
+  };
+}
+
+function destinationFromId(id, people) {
   const recipient = findRecipient(id);
-  if (recipient) {
-    return {
-      id: recipient.id,
-      name: recipient.name,
-      city: recipient.city,
-      cityId: recipient.cityId,
-      country: recipient.country,
-      continent: recipient.continent,
-      lat: recipient.lat,
-      lng: recipient.lng,
-    };
-  }
+  if (recipient) return demoDestination(recipient);
+  if (people && people.has(id)) return people.get(id);
   return senderFromId(id);
 }
 
@@ -67,9 +75,9 @@ export function resolveDefaultPace(explicit = process.env.PACE) {
   return DEFAULT_PACE;
 }
 
-function buildGeometry(fromId, toId, pace, fallback = DEFAULT_PACE) {
+function buildGeometry(fromId, toId, pace, fallback = DEFAULT_PACE, people = null) {
   const from = senderFromId(fromId);
-  const to = destinationFromId(toId);
+  const to = destinationFromId(toId, people);
   if (!from || !to) return { error: "找不到地點" };
   if (from.id === to.id) return { error: "請選擇不同的寄出地與收件地" };
   const distanceKm = round(haversineKm(from.lat, from.lng, to.lat, to.lng), 3);
@@ -117,6 +125,8 @@ function toPublic(letter, nowMs) {
     mode: flight.mode,
     legIndex: flight.legIndex,
     senderId: letter.senderId || null,
+    receivedAt: letter.receivedAt || null,
+    note: imageVisible ? (letter.note || "") : "",
     serverNow: new Date(nowMs).toISOString(),
     imageUrl: imageVisible ? `/api/letters/${letter.id}/image` : null,
   };
@@ -145,11 +155,15 @@ export function createApp({
       const flight = describeFlight(letter, nowMs);
       if (letter.status === "in_flight" && flight.status === "delivered") {
         changed = true;
+        const updatedAt = new Date(nowMs).toISOString();
+        if (awaitsReceipt(letter)) {
+          return { ...letter, status: "awaiting_receipt", updatedAt };
+        }
         return {
           ...letter,
           status: "delivered",
           deliveredAt: letter.arrivesAt,
-          updatedAt: new Date(nowMs).toISOString(),
+          updatedAt,
         };
       }
       return letter;
@@ -193,21 +207,74 @@ export function createApp({
   });
 
   app.get("/api/route", (req, res) => {
-    const geo = buildGeometry(req.query.fromId, req.query.toId, req.query.pace, paceFallback);
+    const geo = buildGeometry(req.query.fromId, req.query.toId, req.query.pace, paceFallback, currentPeople());
     if (geo.error) return res.status(400).json({ error: geo.error });
     res.json(toRoute(geo));
+  });
+
+  app.post("/api/senders", (req, res) => {
+    const body = req.body || {};
+    if (body.ofAge !== true) return res.status(403).json({ error: AGE_REQUIRED });
+    const senderId = normalizeSenderId(body.senderId);
+    if (!senderId) return res.status(400).json({ error: "寄件人編號無法辨認" });
+    const refusal = contactRefusal(typeof body.nickname === "string" ? body.nickname : "", { subject: "nickname" });
+    if (refusal.kinds.length) {
+      return res.status(400).json({ error: refusal.error, reasons: refusal.kinds });
+    }
+    const nickname = normalizeNickname(body.nickname);
+    if (!nickname) return res.status(400).json({ error: "請留下一個暱稱。" });
+    const city = findCity(body.cityId);
+    if (!city) return res.status(400).json({ error: "找不到這個地區" });
+    const existing = store.getSender(senderId);
+    const saved = store.saveSender({
+      id: senderId,
+      nickname,
+      cityId: city.id,
+      city: city.name,
+      country: city.country,
+      createdAt: existing?.createdAt || new Date(now()).toISOString(),
+    });
+    res.status(existing ? 200 : 201).json(publicSender(saved));
   });
 
   app.post("/api/recipients/draw", (req, res) => {
     const body = req.body || {};
     const from = senderFromId(body.fromId || "taipei");
     if (!from) return res.status(400).json({ error: "找不到寄出地" });
-    const recipient = pickRecipient({
-      from,
-      excludeIds: [body.excludeId, ...recentRecipientIds(1)],
-      random,
-    });
-    const geo = buildGeometry(from.id, recipient.id, body.pace, paceFallback);
+    const sender = readSenderId(body.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    const people = currentPeople();
+    const registered = store.listSenders();
+    const self = sender.senderId ? store.getSender(sender.senderId) : null;
+    let toId = null;
+    if (self && registered.length >= 2) {
+      const blockedIds = store.listBlocks()
+        .filter((block) => block.blockedId === sender.senderId)
+        .map((block) => block.blockerId);
+      const skipIds = [];
+      for (const person of registered) {
+        const city = findCity(person.cityId);
+        if (!city || sameHomeCity(from, city)) skipIds.push(person.id);
+      }
+      const chosen = pickPerson({
+        senders: registered,
+        selfId: sender.senderId,
+        excludeIds: [body.excludeId, lastMailedTo(sender.senderId)],
+        blockedIds,
+        skipIds,
+        random,
+      });
+      if (chosen) toId = chosen.id;
+    }
+    if (!toId) {
+      const demo = pickRecipient({
+        from,
+        excludeIds: [body.excludeId, ...recentRecipientIds(1)],
+        random,
+      });
+      toId = demo.id;
+    }
+    const geo = buildGeometry(from.id, toId, body.pace, paceFallback, people);
     if (geo.error) return res.status(400).json({ error: geo.error });
     res.json(toRoute(geo));
   });
@@ -293,20 +360,122 @@ export function createApp({
   function applyImage(letterId, imageDataUrl) {
     const parsed = parseDataUrl(imageDataUrl);
     if (!parsed) return { error: "請附上信面圖片" };
-    const imageFile = store.saveImage(letterId, parsed.buffer, parsed.ext);
+    const cleaned = stripImageMeta(parsed.buffer, parsed.mime);
+    const imageFile = store.saveImage(letterId, cleaned.length ? cleaned : parsed.buffer, parsed.ext);
     return { imageFile };
   }
 
+  function currentPeople() {
+    const map = new Map();
+    for (const sender of store.listSenders()) {
+      const city = findCity(sender.cityId);
+      if (!city) continue;
+      map.set(sender.id, personRecipient(sender, city));
+    }
+    return map;
+  }
+
+  function readNote(raw) {
+    if (raw == null || raw === "") return { note: "" };
+    if (typeof raw !== "string") return { error: "附言無法辨認", status: 400 };
+    const note = raw.trim();
+    if (note.length > 400) return { error: "附言太長。", status: 400 };
+    const refusal = contactRefusal(note);
+    if (refusal.kinds.length) {
+      return { error: refusal.error, reasons: refusal.kinds, status: 400 };
+    }
+    return { note };
+  }
+
+  function decorateFrom(from, senderId) {
+    const sender = senderId ? store.getSender(senderId) : null;
+    if (!sender) return from;
+    return {
+      ...from,
+      name: sender.nickname,
+      city: from.city || from.name,
+    };
+  }
+
+  function rejectPair(senderId, to) {
+    if (!awaitsReceipt({ to })) return null;
+    if (!senderId) return { error: "請先留下暱稱。", status: 400 };
+    if (!store.getSender(senderId)) return { error: "請先留下暱稱。", status: 400 };
+    if (to.id === senderId) return { error: "不能寄給自己。", status: 400 };
+    const blocked = store.listBlocks().some((block) => (
+      block.blockedId === senderId && block.blockerId === to.id
+    ));
+    if (blocked) return { error: "請換一位收件人。", status: 409 };
+    return null;
+  }
+
+  function lastMailedTo(senderId) {
+    if (!senderId) return null;
+    for (const letter of store.list()) {
+      if (letter.senderId !== senderId || letter.status === "draft") continue;
+      return letter.to?.id || null;
+    }
+    return null;
+  }
+
+  function publicSender(sender) {
+    const city = findCity(sender.cityId);
+    return {
+      id: sender.id,
+      nickname: sender.nickname,
+      city: city?.name || sender.city,
+      cityId: sender.cityId,
+      country: city?.country || sender.country || "",
+      createdAt: sender.createdAt,
+    };
+  }
+
+  function mailboxItem(letter) {
+    const from = letter.from || {};
+    const flying = letter.status === "in_flight";
+    return {
+      id: letter.id,
+      status: letter.status,
+      from: {
+        name: from.name || "",
+        city: from.city || "",
+        country: from.country || "",
+      },
+      arrivesAt: letter.arrivesAt,
+      receivedAt: letter.receivedAt || null,
+      note: flying ? "" : (letter.note || ""),
+      imageUrl: flying ? null : `/api/letters/${letter.id}/image`,
+    };
+  }
+
+  app.get("/api/mailbox", (req, res) => {
+    const sender = readSenderId(req.query.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    if (!sender.senderId) return res.status(400).json({ error: "請帶上寄件人編號" });
+    const nowMs = now();
+    const letters = persistArrivals(nowMs).filter((letter) => (
+      letter.to?.demo === false && letter.to?.id === sender.senderId && letter.status !== "draft"
+    ));
+    res.json({ letters: letters.map((letter) => mailboxItem(letter)) });
+  });
+
   app.post("/api/letters", (req, res) => {
     const body = req.body || {};
-    const geo = buildGeometry(body.fromId, body.toId, body.pace, paceFallback);
-    if (geo.error) return res.status(400).json({ error: geo.error });
-    const id = randomUUID();
-    const image = applyImage(id, body.imageDataUrl);
-    if (image.error) return res.status(400).json({ error: image.error });
-    const nowMs = now();
     const sender = readSenderId(body.senderId);
     if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    if (sender.senderId && body.toId === sender.senderId) {
+      return res.status(400).json({ error: "不能寄給自己。" });
+    }
+    const people = currentPeople();
+    const geo = buildGeometry(body.fromId, body.toId, body.pace, paceFallback, people);
+    if (geo.error) return res.status(400).json({ error: geo.error });
+    const noted = readNote(body.note);
+    if (noted.error) {
+      return res.status(noted.status).json({ error: noted.error, reasons: noted.reasons });
+    }
+    const pair = rejectPair(sender.senderId, geo.to);
+    if (pair) return res.status(pair.status).json({ error: pair.error });
+    const nowMs = now();
     const launch = Boolean(body.launch);
     if (launch) {
       const gate = guardInFlight(sender.senderId, nowMs);
@@ -315,23 +484,28 @@ export function createApp({
         return res.status(status).json(gate.limit ? quotaBody(gate) : { error: gate.error });
       }
     }
+    const id = randomUUID();
+    const image = applyImage(id, body.imageDataUrl);
+    if (image.error) return res.status(400).json({ error: image.error });
     const timestamp = new Date(nowMs).toISOString();
     let letter = {
       id,
       status: "draft",
-      from: geo.from,
+      from: decorateFrom(geo.from, sender.senderId),
       to: geo.to,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
       senderId: sender.senderId,
+      note: noted.note,
       imageFile: image.imageFile,
       createdAt: timestamp,
       updatedAt: timestamp,
       departedAt: null,
       arrivesAt: null,
       deliveredAt: null,
+      receivedAt: null,
     };
     if (launch) {
       const departed = new Date(nowMs);
@@ -359,10 +533,17 @@ export function createApp({
       body.toId || existing.to.id,
       body.pace || existing.pace,
       paceFallback,
+      currentPeople(),
     );
     if (geo.error) return res.status(400).json({ error: geo.error });
     const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
     if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    const noted = readNote(body.note == null ? existing.note : body.note);
+    if (noted.error) {
+      return res.status(noted.status).json({ error: noted.error, reasons: noted.reasons });
+    }
+    const pair = rejectPair(sender.senderId, geo.to);
+    if (pair) return res.status(pair.status).json({ error: pair.error });
     let imageFile = existing.imageFile;
     if (body.imageDataUrl) {
       const image = applyImage(existing.id, body.imageDataUrl);
@@ -370,13 +551,14 @@ export function createApp({
       imageFile = image.imageFile;
     }
     const letter = store.update(existing.id, {
-      from: geo.from,
+      from: decorateFrom(geo.from, sender.senderId),
       to: geo.to,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
       senderId: sender.senderId,
+      note: noted.note,
       imageFile,
       updatedAt: new Date(nowMs).toISOString(),
     });
@@ -396,8 +578,22 @@ export function createApp({
       body.toId || existing.to.id,
       body.pace || existing.pace,
       paceFallback,
+      currentPeople(),
     );
     if (geo.error) return res.status(400).json({ error: geo.error });
+    const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    const noted = readNote(body.note == null ? existing.note : body.note);
+    if (noted.error) {
+      return res.status(noted.status).json({ error: noted.error, reasons: noted.reasons });
+    }
+    const pair = rejectPair(sender.senderId, geo.to);
+    if (pair) return res.status(pair.status).json({ error: pair.error });
+    const gate = guardInFlight(sender.senderId, nowMs);
+    if (gate.error) {
+      const status = gate.status || 409;
+      return res.status(status).json(gate.limit ? quotaBody(gate) : { error: gate.error });
+    }
     let imageFile = existing.imageFile;
     if (body.imageDataUrl) {
       const image = applyImage(existing.id, body.imageDataUrl);
@@ -405,31 +601,98 @@ export function createApp({
       imageFile = image.imageFile;
     }
     if (!imageFile) return res.status(400).json({ error: "請附上信面圖片" });
-    const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
-    if (sender.error) return res.status(sender.status).json({ error: sender.error });
-    const gate = guardInFlight(sender.senderId, nowMs);
-    if (gate.error) {
-      const status = gate.status || 409;
-      return res.status(status).json(gate.limit ? quotaBody(gate) : { error: gate.error });
-    }
     const departed = new Date(nowMs);
     const letter = store.update(existing.id, {
       status: "in_flight",
-      from: geo.from,
+      from: decorateFrom(geo.from, gate.senderId),
       to: geo.to,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
       legs: geo.legs,
       senderId: gate.senderId,
+      note: noted.note,
       imageFile,
       departedAt: departed.toISOString(),
       arrivesAt: new Date(departed.getTime() + geo.durationSeconds * 1000).toISOString(),
       deliveredAt: null,
+      receivedAt: null,
       updatedAt: departed.toISOString(),
     });
     res.json(toPublic(letter, nowMs));
   }
+
+  function addressedTo(letter, senderId) {
+    return Boolean(senderId) && awaitsReceipt(letter) && letter.to?.id === senderId;
+  }
+
+  app.post("/api/letters/:id/receive", (req, res) => {
+    const nowMs = now();
+    const letter = readLetter(req.params.id, nowMs);
+    if (!letter) return res.status(404).json({ error: "找不到這封信" });
+    const sender = readSenderId((req.body || {}).senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    if (!awaitsReceipt(letter)) return res.status(409).json({ error: "這封信不用登記。" });
+    if (!addressedTo(letter, sender.senderId)) {
+      return res.status(403).json({ error: "這封信不是寄給你的。" });
+    }
+    if (letter.status === "delivered" && letter.receivedAt) return res.json(toPublic(letter, nowMs));
+    if (letter.status !== "awaiting_receipt") return res.status(409).json({ error: "信還在路上。" });
+    const timestamp = new Date(nowMs).toISOString();
+    const updated = store.update(letter.id, {
+      status: "delivered",
+      receivedAt: timestamp,
+      deliveredAt: letter.arrivesAt,
+      updatedAt: timestamp,
+    });
+    res.json(toPublic(updated, nowMs));
+  });
+
+  app.post("/api/letters/:id/report", (req, res) => {
+    const nowMs = now();
+    const letter = readLetter(req.params.id, nowMs);
+    if (!letter) return res.status(404).json({ error: "找不到這封信" });
+    const sender = readSenderId((req.body || {}).senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    if (!addressedTo(letter, sender.senderId)) {
+      return res.status(403).json({ error: "這封信不是寄給你的。" });
+    }
+    if (letter.status === "draft" || letter.status === "in_flight") {
+      return res.status(409).json({ error: "信還在路上。" });
+    }
+    if (!letter.senderId) return res.status(409).json({ error: "這封信沒有可檢舉的寄件人。" });
+    const report = store.addReport({
+      id: randomUUID(),
+      letterId: letter.id,
+      reporterId: sender.senderId,
+      authorId: letter.senderId,
+      createdAt: new Date(nowMs).toISOString(),
+    });
+    res.json({ ok: true, id: report.id });
+  });
+
+  app.post("/api/letters/:id/block", (req, res) => {
+    const nowMs = now();
+    const letter = readLetter(req.params.id, nowMs);
+    if (!letter) return res.status(404).json({ error: "找不到這封信" });
+    const sender = readSenderId((req.body || {}).senderId);
+    if (sender.error) return res.status(sender.status).json({ error: sender.error });
+    if (!addressedTo(letter, sender.senderId)) {
+      return res.status(403).json({ error: "這封信不是寄給你的。" });
+    }
+    if (letter.status === "draft" || letter.status === "in_flight") {
+      return res.status(409).json({ error: "信還在路上。" });
+    }
+    if (!letter.senderId || letter.senderId === sender.senderId) {
+      return res.status(409).json({ error: "這封信沒有可封鎖的寄件人。" });
+    }
+    store.addBlock({
+      blockerId: sender.senderId,
+      blockedId: letter.senderId,
+      createdAt: new Date(nowMs).toISOString(),
+    });
+    res.json({ ok: true });
+  });
 
   app.post("/api/letters/:id/throw", launchDraft);
   app.post("/api/letters/:id/send", launchDraft);
