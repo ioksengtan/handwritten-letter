@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#f4f7f8" />
+    <meta name="theme-color" content="#f7f1e4" />
     <title>在路上</title>
     <link
       rel="icon"
@@ -138,6 +138,7 @@
         </header>
         <div class="compose-body">
           <div id="recipient-banner" class="recipient-card" hidden>
+            <p class="recipient-kicker">收件人</p>
             <p class="demo-mark" id="recipient-demo" hidden>這是示範收件人</p>
             <p class="who" id="recipient-name"></p>
             <p class="where" id="recipient-where"></p>
@@ -147,10 +148,34 @@
           <div class="paper-frame">
             <canvas id="letter-canvas" width="600" height="760"></canvas>
           </div>
-          <div class="tool-row">
-            <button type="button" id="btn-upload">上傳照片</button>
-            <button type="button" id="btn-undo">復原</button>
-            <button type="button" id="btn-clear">清除</button>
+          <div class="stationery">
+            <p class="stationery-label">文具盒</p>
+            <div class="tool-row">
+              <button type="button" id="btn-upload" class="tool">
+                <svg class="tool-icon" viewBox="0 0 32 32" aria-hidden="true">
+                  <path d="M6 9h13l6 6v10H6z" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                  <path d="M19 9v6h6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                  <path d="M10 22l3.5-3.5 2 2 2.5-2.5 3 4H10z" fill="currentColor" opacity="0.45"/>
+                </svg>
+                <span>上傳照片</span>
+              </button>
+              <button type="button" id="btn-undo" class="tool">
+                <svg class="tool-icon" viewBox="0 0 32 32" aria-hidden="true">
+                  <rect x="7" y="9" width="18" height="14" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                  <circle cx="14.5" cy="16" r="3" fill="currentColor" opacity="0.45"/>
+                  <circle cx="19.2" cy="13.5" r="1.3" fill="currentColor" opacity="0.35"/>
+                </svg>
+                <span>復原</span>
+              </button>
+              <button type="button" id="btn-clear" class="tool">
+                <svg class="tool-icon" viewBox="0 0 32 32" aria-hidden="true">
+                  <path d="M8 18.5 16 10l7.5 8-3.5 4h-8.5z" fill="#f3c7c2" stroke="#6e342e" stroke-width="1.3"/>
+                  <path d="M11 22.5h13" fill="none" stroke="#6e342e" stroke-width="1.3"/>
+                </svg>
+                <span>清除</span>
+              </button>
+            </div>
+            <p class="ink-swatch"><i aria-hidden="true"></i><span>藍黑墨水筆</span></p>
             <input id="file-input" type="file" accept="image/*" hidden />
           </div>
           <label class="note-field">
@@ -218,8 +243,11 @@
             <button type="button" class="text-btn" id="btn-copy-share" hidden>複製分享頁連結</button>
           </div>
           <p class="mode-now" id="flight-mode"></p>
-          <p class="eta" id="flight-eta"></p>
-          <p class="countdown" id="flight-countdown"></p>
+          <div class="postal-clock" id="flight-clock">
+            <p class="postal-clock-ring" aria-hidden="true"></p>
+            <p class="countdown" id="flight-countdown"></p>
+            <p class="eta" id="flight-eta"></p>
+          </div>
           <p class="remain" id="flight-remain"></p>
           <div class="track" id="flight-track" aria-hidden="true"><span id="flight-bar"></span></div>
           <p class="handoff-note" id="flight-open-note" hidden>送到之後十四天內可以拆信。</p>
