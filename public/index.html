@@ -24,6 +24,7 @@
           <header class="topbar">
             <h1>在路上</h1>
             <div class="top-links">
+              <button type="button" class="region-link" id="btn-mailbox">我的信箱</button>
               <button type="button" class="region-link" id="btn-passport">郵戳護照</button>
               <button type="button" class="region-link" id="btn-region" hidden>我的地區</button>
             </div>
@@ -48,10 +49,33 @@
             <div id="home-map" class="aged-map"></div>
           </div>
           <div class="quota" id="home-quota"></div>
+          <p id="home-incoming" class="mail-hint" hidden></p>
           <div id="home-letters"></div>
         </div>
         <div class="dock">
           <button type="button" class="btn primary" id="btn-draw">抽一位隨機收件人</button>
+        </div>
+      </section>
+
+      <section id="view-identity" class="view has-dock" hidden>
+        <div class="scroll">
+          <header class="topbar">
+            <h1>怎麼稱呼你</h1>
+          </header>
+          <div class="identity-card">
+            <p class="region-lede" id="identity-lede"></p>
+            <label class="nick-field" for="nickname-input">暱稱</label>
+            <input id="nickname-input" type="text" maxlength="20" autocomplete="off" enterkeyhint="next" placeholder="例如：小紙" />
+            <label class="age-check">
+              <input id="age-check" type="checkbox" />
+              <span>我已滿 16 歲</span>
+            </label>
+            <p class="age-note">未滿 16 歲不能使用。</p>
+            <p id="identity-error" class="identity-error" hidden></p>
+          </div>
+        </div>
+        <div class="dock">
+          <button type="button" class="btn primary" id="btn-identity">下一步</button>
         </div>
       </section>
 
@@ -87,6 +111,7 @@
         </header>
         <div class="compose-body">
           <div id="recipient-banner" class="recipient-card" hidden>
+            <p class="demo-mark" id="recipient-demo" hidden>這是示範收件人</p>
             <p class="who" id="recipient-name"></p>
             <p class="where" id="recipient-where"></p>
             <button type="button" class="text-btn" id="btn-change-recipient" hidden>換一位</button>
@@ -101,6 +126,10 @@
             <button type="button" id="btn-clear">清除</button>
             <input id="file-input" type="file" accept="image/*" hidden />
           </div>
+          <label class="note-field">
+            <span>附言</span>
+            <textarea id="letter-note" maxlength="400" rows="3" placeholder="想另外寫一句，可以留在這裡。電話、電子郵件、網址和社群帳號請不要寫。"></textarea>
+          </label>
           <div class="estimate" id="estimate"></div>
           <div class="pace-row">
             <span>郵寄時間</span>
@@ -128,6 +157,8 @@
         </button>
         <div class="sheet">
           <p class="route" id="draw-kicker">抽到一位收件人</p>
+          <p class="demo-mark" id="draw-demo" hidden>這是示範收件人</p>
+          <p class="demo-note" id="draw-demo-note" hidden>真人還不到兩位，這次從示範名單裡抽。</p>
           <p class="eta" id="draw-name"></p>
           <p class="remain" id="draw-where"></p>
           <p class="draw-meta" id="draw-meta"></p>
@@ -195,7 +226,37 @@
             <p class="caption" id="read-caption"></p>
             <button type="button" class="text-btn back-open" id="btn-read-envelope">信封背面</button>
             <div class="aftertaste" id="read-after"></div>
+            <p id="read-note" class="read-note" hidden></p>
+            <div id="read-actions" class="read-actions" hidden>
+              <button type="button" class="btn primary" id="btn-received">已收到</button>
+              <p id="received-note" class="received-note" hidden>已登記收到。這封信會計入對方可以同時寄出的格數。</p>
+              <div class="read-safety">
+                <button type="button" class="text-btn" id="btn-report">檢舉</button>
+                <button type="button" class="text-btn" id="btn-block">封鎖</button>
+              </div>
+              <div id="safety-panel" hidden>
+                <p id="safety-copy"></p>
+                <div class="draft-actions">
+                  <button type="button" class="btn" id="btn-safety-no">先不要</button>
+                  <button type="button" class="btn" id="btn-safety-yes">確定</button>
+                </div>
+              </div>
+            </div>
           </div>
+        </div>
+      </section>
+      <section id="view-mailbox" class="view" hidden>
+        <div class="scroll">
+          <header class="topbar">
+            <button type="button" class="icon-btn" id="mailbox-back" aria-label="返回">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M14.5 5 L8 12 L14.5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <h1>我的信箱</h1>
+          </header>
+          <p class="region-lede">寄給你的信在這裡。還在路上的不能先看，只看得到預計哪一天到。</p>
+          <div id="mailbox-list"></div>
         </div>
       </section>
       <section id="view-passport" class="view" hidden>
@@ -220,6 +281,14 @@
           <p class="back-note" id="back-note"></p>
           <div id="back-stamps" class="stamp-sheet"></div>
           <button type="button" class="btn" id="btn-back-close">蓋上</button>
+        </div>
+      </div>
+      <div id="contact-stop" class="counter-slip" hidden>
+        <div class="slip-paper" role="dialog" aria-modal="true" aria-labelledby="contact-title">
+          <p class="slip-kicker">還沒投入郵筒</p>
+          <h2 id="contact-title">這封信先留下</h2>
+          <div id="contact-reasons" class="contact-reasons"></div>
+          <button type="button" class="btn" id="btn-contact-back">回到信上</button>
         </div>
       </div>
       <div id="post-slip" class="counter-slip" hidden>

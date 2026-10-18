@@ -2,4 +2,10 @@ node_modules/
 data/letters.json
 data/letters.json.tmp
 data/images/
+data/senders.json
+data/senders.json.tmp
+data/reports.json
+data/reports.json.tmp
+data/blocks.json
+data/blocks.json.tmp
 .DS_Store

@@ -149,4 +149,9 @@ test("a stored delivered letter stays at the destination", () => {
   assert.equal(view.status, "delivered");
   assert.equal(view.progress, 1);
   assert.ok(Math.abs(view.position.lat - to.lat) < 1e-6);
+
+  const waiting = describeFlight({ ...letter, status: "awaiting_receipt" }, 1_000);
+  assert.equal(waiting.status, "awaiting_receipt");
+  assert.equal(waiting.progress, 1);
+  assert.ok(Math.abs(waiting.position.lat - to.lat) < 1e-6);
 });

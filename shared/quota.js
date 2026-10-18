@@ -63,16 +63,24 @@ export function quotaWaitMessage(arrivalText) {
  * Count this browser sender's letters.
  * Letters with no senderId do not count, in flight or delivered.
  * Drafts do not count. Pace does not change the table.
+ *
+ * A letter to a real person keeps its slot after the pigeon lands, until
+ * the recipient presses 已收到 (`awaiting_receipt`). That state is not
+ * delivered. Demo letters and older letters become `delivered` on arrival,
+ * which is what frees the slot and raises the ladder.
  */
 export function quotaSnapshot(letters, senderId) {
   const id = normalizeSenderId(senderId);
   const mine = [];
   let delivered = 0;
+  let awaitingReceipt = 0;
   if (id) {
     for (const letter of letters || []) {
       if (letter?.senderId !== id) continue;
-      if (letter.status === "in_flight") mine.push(letter);
-      else if (letter.status === "delivered") delivered += 1;
+      if (letter.status === "in_flight" || letter.status === "awaiting_receipt") {
+        mine.push(letter);
+        if (letter.status === "awaiting_receipt") awaitingReceipt += 1;
+      } else if (letter.status === "delivered") delivered += 1;
     }
   }
   let soonest = null;
@@ -87,6 +95,7 @@ export function quotaSnapshot(letters, senderId) {
     limit,
     delivered,
     inFlight,
+    awaitingReceipt,
     remaining: Math.max(0, limit - inFlight),
     full: inFlight >= limit,
     soonestArrivesAt: soonest == null ? null : new Date(soonest).toISOString(),

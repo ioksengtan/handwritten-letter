@@ -33,6 +33,22 @@ test("a sender profile round-trips and rejects anything that is not a known city
   const moved = parseSenderProfile(serializeSenderProfile("tokyo", "browser-sender-01"));
   assert.equal(moved.originId, "tokyo");
   assert.equal(moved.senderId, "browser-sender-01");
+  assert.equal(moved.nickname, null);
+  assert.equal(moved.ofAge, false);
+
+  const named = parseSenderProfile(serializeSenderProfile("taipei", "browser-sender-01", {
+    nickname: "小紙",
+    ofAge: true,
+  }));
+  assert.equal(named.nickname, "小紙");
+  assert.equal(named.ofAge, true);
+  assert.equal(parseSenderProfile(JSON.stringify({
+    version: 1,
+    originId: "taipei",
+    senderId: "browser-sender-01",
+    nickname: "LINE",
+    ofAge: true,
+  })).nickname, null);
 });
 
 test("the counter slip says a posted letter cannot be taken back or changed", () => {
