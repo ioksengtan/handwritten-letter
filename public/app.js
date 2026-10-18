@@ -39,6 +39,8 @@ import {
   stopTimeMs,
 } from "/shared/marks.js";
 import { planCourier } from "/shared/route.js";
+import { friendPlace, normalizeFriendName, planFriendLetter } from "/shared/friend.js";
+import { INVITE_LINE, RETURNED_DETAIL, RETURNED_NOTE, isPublicToken } from "/shared/link.js";
 import { browserTimeZone, formatArrival, formatCountdown, formatPostalDate, formatPostalStamp, formatSpan } from "/shared/clock.js";
 
 const PAPER = "#fffdf8";
@@ -121,6 +123,10 @@ const state = {
   safetyMode: null,
   draftTimer: 0,
   draftNote: "",
+  openingFriend: null,
+  friendCityId: null,
+  friendMap: null,
+  friendMarkers: new Map(),
 };
 
 let renderToken = 0;
@@ -251,6 +257,13 @@ function letterNote() {
   return $("letter-note")?.value || "";
 }
 
+/** The note and, for a friend, the name on the envelope. Both are checked before posting. */
+function letterTextForReview() {
+  const parts = [letterNote()];
+  if (state.mode === "friend" && state.recipient?.name) parts.push(state.recipient.name);
+  return parts.join("\n");
+}
+
 function showContactStop(refusal) {
   const root = $("contact-reasons");
   const messages = refusal.messages?.length ? refusal.messages : [refusal.error].filter(Boolean);
@@ -356,7 +369,7 @@ function navigate(hash) {
 
 function showOnly(name) {
   state.view = name;
-  for (const id of ["home", "identity", "region", "compose", "draw", "flight", "read", "passport", "mailbox"]) {
+  for (const id of ["home", "identity", "region", "friend", "compose", "draw", "flight", "read", "returned", "passport", "mailbox"]) {
     $(`view-${id}`).hidden = id !== name;
   }
 }
@@ -485,7 +498,7 @@ function renderHomeList(letters) {
     { key: "draft", title: "草稿" },
   ];
   if (!mine.length) {
-    root.innerHTML = `<p class="empty">還沒有寄出的信。抽一位收件人，寄到對方住的城市。</p>`;
+    root.innerHTML = `<p class="empty">還沒有信。可以抽一位收件人，或寄給一位朋友。</p>`;
     return;
   }
   const html = groups.map((group) => {
@@ -669,11 +682,15 @@ function noteDraft(key, message) {
 
 async function persistLocalDraft({ fromEdit = false, quality = 0.86, attempt = 0 } = {}) {
   if (state.submitting || state.view !== "compose") return;
+  const friend = state.mode === "friend" && state.recipient?.kind === "friend";
   if (!state.recipient || !state.ctx) return;
   if (!canvasHasInk()) {
     if (!fromEdit) return;
     const existing = await readLocalDraft();
-    if (existing?.recipientId === state.recipient.id) await clearLocalDraft();
+    const same = friend
+      ? existing?.audience === "friend" && existing.cityId === state.recipient.cityId && existing.friendName === state.recipient.name
+      : existing?.audience !== "friend" && existing?.recipientId === state.recipient.id;
+    if (same) await clearLocalDraft();
     return;
   }
   const blob = await canvasBlob(quality);
@@ -684,11 +701,14 @@ async function persistLocalDraft({ fromEdit = false, quality = 0.86, attempt = 0
     return persistLocalDraft({ fromEdit, quality: decision.quality, attempt: attempt + 1 });
   }
   const record = {
-    version: 1,
-    recipientId: state.recipient.id,
-    recipientName: state.recipient.name || "",
-    recipientCity: state.recipient.city || "",
-    recipientDemo: state.recipient.demo === true,
+    version: friend ? 2 : 1,
+    audience: friend ? "friend" : "stranger",
+    recipientId: friend ? null : state.recipient.id,
+    recipientName: friend ? "" : (state.recipient.name || ""),
+    recipientCity: friend ? "" : (state.recipient.city || ""),
+    recipientDemo: friend ? false : state.recipient.demo === true,
+    friendName: friend ? state.recipient.name : null,
+    cityId: friend ? state.recipient.cityId : null,
     note: letterNote(),
     pace: state.pace,
     image: decision.action === "drop-image" ? null : blob,
@@ -730,7 +750,13 @@ function scheduleLocalDraft() {
 async function restoreLocalDraft() {
   if (!state.recipient) return;
   const draft = await readLocalDraft();
-  if (!draft || draft.recipientId !== state.recipient.id) return;
+  if (!draft) return;
+  const friend = state.mode === "friend";
+  if (friend) {
+    if (draft.audience !== "friend" || draft.cityId !== state.recipient.cityId || draft.friendName !== state.recipient.name) return;
+  } else if (draft.audience === "friend" || draft.recipientId !== state.recipient.id) {
+    return;
+  }
   if (PACES[draft.pace]) state.pace = draft.pace;
   if (typeof draft.note === "string") $("letter-note").value = draft.note;
   if (!draft.image) return;
@@ -748,10 +774,18 @@ async function restoreLocalDraft() {
 function paintDraftBanner(draft) {
   const banner = $("draft-banner");
   if (!banner) return;
-  const person = draft?.recipientId ? findRecipient(draft.recipientId) : null;
-  const name = person?.name || draft?.recipientName;
-  const city = person?.city || draft?.recipientCity || "";
-  if (!name) {
+  let who = "";
+  if (draft?.audience === "friend") {
+    const city = findCity(draft.cityId);
+    const name = normalizeFriendName(draft.friendName || "");
+    if (city && name) who = `收件人是${name}，${city.name}。`;
+  } else {
+    const person = draft?.recipientId ? findRecipient(draft.recipientId) : null;
+    const name = person?.name || draft?.recipientName;
+    const city = person?.city || draft?.recipientCity || "";
+    if (name) who = city ? `收件人是${name}，${city}。` : `收件人是${name}。`;
+  }
+  if (!who) {
     banner.hidden = true;
     state.discardingDraft = false;
     return;
@@ -759,7 +793,7 @@ function paintDraftBanner(draft) {
   state.localDraft = draft;
   banner.hidden = false;
   setText("draft-prompt", DRAFT_RESUME_PROMPT);
-  setText("draft-who", `收件人是${name}，${city}。`);
+  setText("draft-who", who);
   const confirming = state.discardingDraft;
   $("draft-ask").hidden = confirming;
   $("draft-confirm-row").hidden = !confirming;
@@ -767,9 +801,14 @@ function paintDraftBanner(draft) {
 }
 
 function resumeLocalDraft() {
-  const id = state.localDraft?.recipientId;
-  if (!id) return;
+  const draft = state.localDraft;
   state.discardingDraft = false;
+  if (draft?.audience === "friend" && draft.cityId && draft.friendName) {
+    navigate(`#/compose?friend=1&city=${encodeURIComponent(draft.cityId)}&name=${encodeURIComponent(draft.friendName)}`);
+    return;
+  }
+  const id = draft?.recipientId;
+  if (!id) return;
   navigate(`#/compose?to=${encodeURIComponent(id)}`);
 }
 
@@ -1046,7 +1085,7 @@ async function openPostSlip() {
     showToast("請先寫下或上傳信面");
     return;
   }
-  const refusal = contactRefusal(letterNote());
+  const refusal = contactRefusal(letterTextForReview());
   if (refusal.kinds.length) {
     showContactStop(refusal);
     return;
@@ -1102,15 +1141,17 @@ function routeUrl(fromId, toId) {
 }
 
 function applyComposeMode() {
+  const friendMode = state.mode === "friend" && state.recipient?.kind === "friend";
   const recipientMode = state.mode === "recipient" && state.recipient;
   const legacyMode = state.mode === "legacy" && state.legacyTo;
-  const addressed = recipientMode || legacyMode;
+  const addressed = friendMode || recipientMode || legacyMode;
   $("recipient-banner").hidden = !addressed;
-  $("btn-change-recipient").hidden = !recipientMode;
-  if (!recipientMode) $("recipient-demo").hidden = true;
+  const change = $("btn-change-recipient");
+  change.hidden = !(friendMode || recipientMode);
+  change.textContent = friendMode ? "改地址" : "換一位";
   const origin = senderById(state.originId);
   setText("compose-origin", origin ? `回郵地址 · ${originLabel(origin)}` : "");
-  if (recipientMode) {
+  if (friendMode || recipientMode) {
     $("recipient-name").textContent = state.recipient.name;
     $("recipient-where").textContent = whereLine(state.recipient);
     $("recipient-demo").hidden = state.recipient.demo !== true;
@@ -1302,22 +1343,32 @@ async function openCompose(params, token) {
   $("letter-note").value = "";
   const toParam = params.get("to") || "";
   const draftId = params.get("draft");
-  let recipient = findRecipient(toParam);
-  if (recipient) recipient = { ...recipient, demo: true };
-  else if (toParam && !draftId) {
-    try {
-      const quote = await api(routeUrl(state.originId, toParam));
-      if (quote?.to?.demo === false) recipient = quote.to;
-    } catch {
-      recipient = null;
+  const friendCity = params.get("friend") === "1" ? findCity(params.get("city") || "") : null;
+  const friendName = normalizeFriendName(params.get("name") || "");
+  let recipient = null;
+  if (!(friendCity && friendName)) {
+    recipient = findRecipient(toParam);
+    if (recipient) recipient = { ...recipient, demo: true };
+    else if (toParam && !draftId) {
+      try {
+        const quote = await api(routeUrl(state.originId, toParam));
+        if (quote?.to?.demo === false) recipient = quote.to;
+      } catch {
+        recipient = null;
+      }
     }
   }
   if (token !== renderToken) return;
-  if (!recipient && !draftId) {
-    navigate("#/draw");
+  if (!recipient && !draftId && !(friendCity && friendName)) {
+    navigate(params.get("friend") === "1" ? "#/friend" : "#/draw");
     return;
   }
-  if (recipient) {
+  if (friendCity && friendName && !draftId) {
+    state.mode = "friend";
+    state.recipient = friendPlace(friendCity, friendName);
+    state.toId = friendCity.id;
+    state.fromId = state.originId;
+  } else if (recipient) {
     state.mode = "recipient";
     state.recipient = recipient;
     state.toId = recipient.id;
@@ -1336,7 +1387,11 @@ async function openCompose(params, token) {
     state.toId = letter.to.id;
     if (PACES[letter.pace]) state.pace = letter.pace;
     const drafted = findRecipient(letter.to.id);
-    if (drafted) {
+    if (letter.audience === "friend" || letter.to?.kind === "friend") {
+      state.mode = "friend";
+      state.recipient = letter.to;
+      state.legacyTo = null;
+    } else if (drafted) {
       state.mode = "recipient";
       state.recipient = { ...drafted, demo: true };
       state.legacyTo = null;
@@ -1365,7 +1420,7 @@ async function openCompose(params, token) {
 
 async function submitLetter(launch) {
   if (state.submitting) return;
-  const refusal = contactRefusal(letterNote());
+  const refusal = contactRefusal(letterTextForReview());
   if (refusal.kinds.length) {
     closePostSlip();
     showContactStop(refusal);
@@ -1385,15 +1440,17 @@ async function submitLetter(launch) {
   $("btn-save").disabled = true;
   $("btn-slip-confirm").disabled = true;
   try {
+    const friendMode = state.mode === "friend" && state.recipient?.kind === "friend";
     const body = {
       fromId: from.id,
-      toId: state.recipient ? state.recipient.id : to.id,
+      toId: friendMode ? state.recipient.cityId : (state.recipient ? state.recipient.id : to.id),
       pace: state.pace,
       senderId: state.senderId,
       note: letterNote().trim(),
       imageDataUrl: $("letter-canvas").toDataURL("image/jpeg", 0.86),
       launch,
     };
+    if (friendMode) body.friendName = state.recipient.name;
     let letter;
     if (state.draftId && launch) {
       letter = await api(`/api/letters/${state.draftId}/send`, {
@@ -1647,12 +1704,75 @@ function setPigeon(position, bearing) {
   if (rot) rot.style.transform = `rotate(${bearing - 90}deg)`;
 }
 
+function absolutePath(linkPath) {
+  try {
+    return new URL(linkPath, location.origin).href;
+  } catch {
+    return linkPath;
+  }
+}
+
+async function copyLink(url) {
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = url;
+    area.setAttribute("readonly", "");
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  showToast("已複製");
+}
+
+function paintHandoff(letter) {
+  const box = $("flight-handoff");
+  if (!box) return;
+  if (state.openingFriend || !letter || letter.status === "draft") {
+    box.hidden = true;
+    return;
+  }
+  const friend = letter.friendPath ? absolutePath(letter.friendPath) : "";
+  const share = letter.sharePath ? absolutePath(letter.sharePath) : "";
+  const primary = friend || share;
+  if (!primary) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  if (friend) {
+    setText("handoff-title", "把這個連結轉給朋友");
+    setText("handoff-link", friend);
+    setText("handoff-note", "我們不寄電子郵件，也不傳簡訊。朋友不用註冊。信還在路上時，只能看信鴿飛到哪裡。送到之後十四天內可以拆信。");
+  } else {
+    setText("handoff-title", "這趟郵程的分享頁");
+    setText("handoff-link", share);
+    setText("handoff-note", "分享頁只有信封、郵票、沿途郵戳、起訖城市和天數，沒有信的內容。");
+  }
+  $("btn-copy-link").dataset.url = primary;
+  const shareRow = $("handoff-share");
+  if (friend && share) {
+    shareRow.hidden = false;
+    setText("handoff-share", `分享頁 ${share}`);
+    $("btn-copy-share").hidden = false;
+    $("btn-copy-share").dataset.url = share;
+  } else {
+    shareRow.hidden = true;
+    $("btn-copy-share").hidden = true;
+  }
+}
+
 function renderFlightHud(letter, progress) {
   setText("flight-route", routeLine(letter.from, letter.to));
   setText("flight-origin", `回郵地址 · ${originLabel(letter.from)}`);
   const bar = $("flight-bar");
   bar.style.width = `${progress * 100}%`;
-  $("flight-sheet")?.classList.toggle("is-arrived", progress >= 1);
+  const sheet = $("flight-sheet");
+  sheet?.classList.toggle("is-arrived", progress >= 1);
+  sheet?.classList.toggle("is-friend-open", Boolean(state.openingFriend));
   const dest = letter.to.city || letter.to.name;
   const waitingOnThem = letter.to?.demo === false
     && letter.to?.id !== state.senderId
@@ -1674,13 +1794,17 @@ function renderFlightHud(letter, progress) {
   } else {
     setText("flight-mode", `信鴿在飛，前往${dest}`);
     $("flight-countdown").hidden = false;
-    setText("flight-eta", formatArrival(letter.arrivesAt));
+    const arrival = state.openingFriend ? formatSlipArrival(letter.arrivesAt, letter.to) : null;
+    setText("flight-eta", arrival?.sentence || formatArrival(letter.arrivesAt));
     setText("flight-countdown", formatCountdown(Math.max(0, (Date.parse(letter.arrivesAt) - nowMs()) / 1000)));
     const remain = Number.isFinite(letter.distanceKm) ? letter.distanceKm * (1 - progress) : letter.remainingKm;
     setText("flight-remain", `剩餘 ${formatDistance(remain)}`);
     $("btn-open").hidden = true;
     $("flight-track").hidden = false;
   }
+  const note = $("flight-open-note");
+  if (note) note.hidden = !state.openingFriend || progress >= 1;
+  paintHandoff(letter);
 }
 
 function tripFraction(trip) {
@@ -1797,7 +1921,7 @@ function flightFrame(token) {
   if (t >= 1) {
     if (!flight.arrived) {
       flight.arrived = true;
-      api(`/api/letters/${letter.id}`).catch(() => {});
+      if (!state.openingFriend && letter.id) api(`/api/letters/${letter.id}`).catch(() => {});
     }
     return;
   }
@@ -1805,6 +1929,10 @@ function flightFrame(token) {
 }
 
 async function showFlight(id, token, params) {
+  state.openingFriend = null;
+  $("flight-back").hidden = false;
+  $("flight-travel").hidden = false;
+  $("flight-sheet")?.classList.remove("is-friend-open");
   const letter = await api(`/api/letters/${id}`);
   if (token !== renderToken) return;
   if (letter.status === "draft") {
@@ -1836,6 +1964,9 @@ async function showFlight(id, token, params) {
 }
 
 async function showRead(id, token) {
+  state.openingFriend = null;
+  $("read-back").hidden = false;
+  $("read-invite").hidden = true;
   const letter = await api(`/api/letters/${id}`);
   if (token !== renderToken) return;
   if (letter.status === "draft") {
@@ -1937,6 +2068,8 @@ function settleCeremony() {
   root.classList.remove("is-playing");
   root.classList.add("is-open");
   paintOpenedLetter();
+  const invite = $("read-invite");
+  if (invite) invite.hidden = !state.openingFriend;
 }
 
 function startCeremony() {
@@ -2092,8 +2225,293 @@ async function registerReceipt() {
   paintOpenedLetter();
 }
 
+function friendTokenFromPath() {
+  const match = /^\/f\/([^/]+)$/.exec(location.pathname);
+  if (!match || !isPublicToken(match[1])) return null;
+  return match[1];
+}
+
+function openAsLetter(payload) {
+  return {
+    from: payload.from,
+    to: payload.to,
+    distanceKm: payload.distanceKm,
+    pace: payload.pace,
+    durationSeconds: payload.durationSeconds,
+    departedAt: payload.departedAt,
+    arrivesAt: payload.arrivesAt,
+    deliveredAt: payload.deliveredAt,
+    status: payload.state === "arrived" ? "delivered" : "in_flight",
+    progress: payload.progress,
+    imageUrl: payload.imageUrl,
+    note: payload.note || "",
+    serverNow: payload.serverNow,
+  };
+}
+
+function showReturnedSlip(title, detail) {
+  showOnly("returned");
+  setText("returned-title", title || RETURNED_NOTE);
+  setText("returned-detail", detail || RETURNED_DETAIL);
+}
+
+async function showFriendRead(token, renderTick) {
+  stopLoops();
+  const payload = await api(`/api/open/${token}`);
+  if (renderTick !== renderToken) return;
+  if (payload.state === "returned") {
+    showReturnedSlip(payload.note, payload.detail);
+    return;
+  }
+  if (payload.state !== "arrived") {
+    await showFriendFlight(openAsLetter(payload), token, renderTick);
+    return;
+  }
+  const letter = openAsLetter(payload);
+  state.readLetter = letter;
+  state.openingFriend = token;
+  $("read-actions").hidden = true;
+  $("read-note").hidden = true;
+  $("safety-panel").hidden = true;
+  showOnly("read");
+  state.backLetter = letter;
+  state.backProgress = 1;
+  const ceremony = $("ceremony");
+  ceremony.classList.remove("is-playing", "is-open");
+  state.ceremonySkip = false;
+  $("read-invite").hidden = true;
+  $("read-back").hidden = true;
+  const img = $("read-image");
+  img.alt = `寄給${pinLabel(letter.to)}的信`;
+  const arrivedAt = letter.deliveredAt || letter.arrivesAt;
+  const stamp = formatPostalStamp(arrivedAt);
+  const dest = letter.to.city || letter.to.name;
+  const who = letter.to.city && letter.to.name !== letter.to.city ? `，給${letter.to.name}` : "";
+  $("read-caption").textContent = `${letter.from.name}寄出 · ${stamp} 抵達${dest}${who}`;
+  $("postmark-place").textContent = letter.from.name;
+  $("envelope-return").textContent = `寄自 ${originLabel(letter.from)}`;
+  $("postmark-time").textContent = formatPostalDate(arrivedAt);
+  fillAftertaste(letter);
+  let started = false;
+  const go = () => {
+    if (started || renderTick !== renderToken) return;
+    started = true;
+    startCeremony();
+  };
+  img.onload = go;
+  img.onerror = () => {
+    if (renderTick !== renderToken) return;
+    showToast("信面還打不開");
+    go();
+  };
+  if (!letter.imageUrl) {
+    showToast("信面還打不開");
+    startCeremony();
+    return;
+  }
+  img.src = letter.imageUrl;
+  if (img.complete) go();
+}
+
+async function showFriendFlight(letter, token, renderTick) {
+  state.openingFriend = token;
+  state.trips = [];
+  if (letter.serverNow) syncClock(letter.serverNow);
+  state.backLetter = letter;
+  state.backProgress = letter.progress || 0;
+  showOnly("flight");
+  $("flight-back").hidden = true;
+  $("flight-travel").hidden = true;
+  $("btn-open").onclick = () => {
+    showFriendRead(token, renderTick).catch((err) => showToast(err.message));
+  };
+  mountFlight(letter, { intro: false });
+  renderFlightHud(letter, letter.progress || 0);
+  state.raf = requestAnimationFrame(() => flightFrame(renderTick));
+  state.poll = setInterval(async () => {
+    if (state.view !== "flight" || renderTick !== renderToken || state.openingFriend !== token) return;
+    try {
+      const fresh = await api(`/api/open/${token}`);
+      if (fresh.state === "returned") {
+        showReturnedSlip(fresh.note, fresh.detail);
+        stopLoops();
+        return;
+      }
+      if (fresh.serverNow) syncClock(fresh.serverNow);
+      const next = openAsLetter(fresh);
+      if (state.flight) state.flight.letter = next;
+      state.backLetter = next;
+    } catch {
+      /* keep the last schedule */
+    }
+  }, 4000);
+}
+
+async function showFriendOpen(token, renderTick) {
+  state.openingFriend = token;
+  let payload;
+  try {
+    payload = await api(`/api/open/${token}`);
+  } catch {
+    showReturnedSlip("找不到這封信", "這條連結沒有對上任何一封還在郵局裡的信。");
+    return;
+  }
+  if (renderTick !== renderToken) return;
+  if (payload.state === "returned") {
+    showReturnedSlip(payload.note, payload.detail);
+    return;
+  }
+  if (payload.state === "arrived") {
+    await showFriendRead(token, renderTick);
+    return;
+  }
+  await showFriendFlight(openAsLetter(payload), token, renderTick);
+}
+
+function paintFriendChoices() {
+  const city = findCity(state.friendCityId);
+  const name = normalizeFriendName($("friend-name").value);
+  const origin = senderById(state.originId);
+  setText("friend-picked", city ? `${city.name} · ${city.country}` : "在地圖上點一個城市，或從下面的名單選。");
+  const preview = $("friend-preview");
+  let blocked = false;
+  if (!city || !origin) {
+    preview.textContent = "";
+  } else if (city.id === origin.id) {
+    preview.textContent = "請選擇不同的寄出地與收件地";
+    blocked = true;
+  } else {
+    const planned = planFriendLetter({
+      from: origin,
+      cityId: city.id,
+      friendName: name || "朋友",
+      pace: state.pace,
+    });
+    if (planned.error) {
+      preview.textContent = planned.error;
+      blocked = true;
+    } else {
+      preview.textContent = `${formatDistance(planned.distanceKm)} · 約 ${formatSpan(planned.durationSeconds)} · 信鴿直飛`;
+    }
+  }
+  $("btn-friend-write").disabled = !name || !city || blocked;
+  for (const button of $("friend-list").querySelectorAll("button")) {
+    const selected = button.dataset.id === state.friendCityId;
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  }
+  for (const [id, marker] of state.friendMarkers) {
+    const el = marker.getElement();
+    if (el) el.classList.toggle("is-picked", id === state.friendCityId);
+  }
+}
+
+function selectFriendCity(id) {
+  if (!findCity(id)) return;
+  state.friendCityId = id;
+  paintFriendChoices();
+  const city = findCity(id);
+  if (state.friendMap && city) state.friendMap.setView([city.lat, city.lng], 4);
+}
+
+function buildFriendList() {
+  const root = $("friend-list");
+  if (!root || root.childElementCount) return;
+  for (const continent of CONTINENTS) {
+    const cities = CITIES.filter((city) => city.continent === continent);
+    if (!cities.length) continue;
+    const section = document.createElement("section");
+    section.className = "region-group";
+    const heading = document.createElement("h2");
+    heading.textContent = continent;
+    const row = document.createElement("div");
+    row.className = "region-cities";
+    for (const city of cities) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip";
+      button.dataset.id = city.id;
+      button.textContent = city.name;
+      button.addEventListener("click", () => selectFriendCity(city.id));
+      row.append(button);
+    }
+    section.append(heading, row);
+    root.append(section);
+  }
+}
+
+function ensureFriendMap() {
+  const container = $("friend-map");
+  if (!container) return;
+  if (state.friendMap) {
+    requestAnimationFrame(() => state.friendMap.invalidateSize());
+    paintFriendChoices();
+    return;
+  }
+  const map = L.map(container, {
+    zoomControl: false,
+    attributionControl: true,
+    worldCopyJump: true,
+  });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  map.setView([18, 20], 1);
+  for (const city of CITIES) {
+    const marker = L.marker([city.lat, city.lng], {
+      icon: L.divIcon({
+        className: "region-pin",
+        html: "<span></span>",
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      }),
+      keyboard: false,
+    }).addTo(map);
+    marker.on("click", () => selectFriendCity(city.id));
+    state.friendMarkers.set(city.id, marker);
+  }
+  map.on("click", (event) => {
+    const city = nearestCity(event.latlng.lat, event.latlng.lng);
+    if (city) selectFriendCity(city.id);
+  });
+  state.friendMap = map;
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    paintFriendChoices();
+  });
+}
+
+function showFriendAddress() {
+  showOnly("friend");
+  buildFriendList();
+  if (state.recipient?.kind === "friend") {
+    const input = $("friend-name");
+    if (input && !input.value) input.value = state.recipient.name;
+    if (!state.friendCityId) state.friendCityId = state.recipient.cityId;
+  }
+  ensureFriendMap();
+  paintFriendChoices();
+}
+
+function beginFriendLetter() {
+  const name = normalizeFriendName($("friend-name").value);
+  const city = findCity(state.friendCityId);
+  if (!name || !city) return;
+  const refusal = contactRefusal(name);
+  if (refusal.kinds.length) {
+    showToast(refusal.error);
+    return;
+  }
+  if (city.id === state.originId) {
+    showToast("請選擇不同的寄出地與收件地");
+    return;
+  }
+  navigate(`#/compose?friend=1&city=${encodeURIComponent(city.id)}&name=${encodeURIComponent(name)}`);
+}
+
 async function render() {
   const token = ++renderToken;
+  const friendToken = friendTokenFromPath();
   const { parts, params } = parseHash();
   const keepPost = state.postLetterId && parts[0] === "flight" && parts[1] === state.postLetterId;
   if (!keepPost) cancelPost();
@@ -2102,6 +2520,11 @@ async function render() {
   closeEnvelopeBack();
   stopLoops();
   try {
+    if (friendToken) {
+      await showFriendOpen(friendToken, token);
+      return;
+    }
+    state.openingFriend = null;
     if (!identityReady()) {
       showIdentity();
       return;
@@ -2117,6 +2540,8 @@ async function render() {
     }
     if (parts[0] === "compose") {
       await openCompose(params, token);
+    } else if (parts[0] === "friend") {
+      showFriendAddress();
     } else if (parts[0] === "draw") {
       await showDraw(params, token);
     } else if (parts[0] === "flight" && parts[1]) {
@@ -2139,6 +2564,10 @@ async function render() {
   } catch (err) {
     if (token !== renderToken) return;
     showToast(err.message);
+    if (friendToken) {
+      showReturnedSlip("找不到這封信", "這條連結沒有對上任何一封還在郵局裡的信。");
+      return;
+    }
     if (state.view !== "home") {
       showOnly("home");
       refreshHome().catch(() => {});
@@ -2203,6 +2632,18 @@ async function boot() {
   $("btn-slip-back").addEventListener("click", closePostSlip);
   $("btn-slip-confirm").addEventListener("click", () => submitLetter(true));
   $("btn-draw").addEventListener("click", () => navigate("#/draw"));
+  $("btn-friend").addEventListener("click", () => navigate("#/friend"));
+  $("friend-back").addEventListener("click", () => navigate("#/"));
+  $("btn-friend-write").addEventListener("click", beginFriendLetter);
+  $("friend-name").addEventListener("input", paintFriendChoices);
+  $("btn-copy-link").addEventListener("click", (event) => {
+    copyLink(event.currentTarget.dataset.url);
+  });
+  $("btn-copy-share").addEventListener("click", (event) => {
+    copyLink(event.currentTarget.dataset.url);
+  });
+  const inviteLink = $("read-invite")?.querySelector("a");
+  if (inviteLink) inviteLink.textContent = INVITE_LINE;
   $("btn-redraw").addEventListener("click", () => {
     redrawRecipient().catch((err) => showToast(err.message));
   });
@@ -2211,6 +2652,10 @@ async function boot() {
     navigate(`#/compose?to=${encodeURIComponent(state.recipient.id)}`);
   });
   $("btn-change-recipient").addEventListener("click", () => {
+    if (state.mode === "friend") {
+      navigate("#/friend");
+      return;
+    }
     if (!state.recipient) return;
     navigate(`#/draw?exclude=${encodeURIComponent(state.recipient.id)}`);
   });
@@ -2246,6 +2691,10 @@ async function boot() {
     persistLocalDraft().catch(() => {});
   });
   await loadDefaultPace();
+  if (friendTokenFromPath()) {
+    render().catch((err) => showToast(err.message));
+    return;
+  }
   if (identityReady() && state.originId) {
     try {
       await syncSender();

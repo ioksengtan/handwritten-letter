@@ -1,0 +1,129 @@
+.dock-pair .btn {
+  flex: 1;
+  padding: 0 8px;
+  font-size: 15px;
+}
+
+.friend-name {
+  display: block;
+  margin: 0 16px 12px;
+}
+
+.friend-name span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--stamp);
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+.friend-name input {
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid rgba(122, 52, 46, 0.42);
+  border-radius: 2px;
+  background: var(--paper);
+}
+
+.friend-preview {
+  min-height: 1.4em;
+  margin: 4px 16px 8px;
+  color: #5c4636;
+  font-family: var(--serif);
+  letter-spacing: 0.04em;
+}
+
+.handoff {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(110, 52, 46, 0.22);
+}
+
+.handoff-title {
+  margin: 0 0 6px;
+  color: var(--stamp);
+  font-family: var(--serif);
+  letter-spacing: 0.08em;
+}
+
+.handoff-link {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(110, 52, 46, 0.35);
+  background: var(--paper);
+  color: #2c241e;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.handoff-note,
+.handoff-share,
+#flight-open-note {
+  margin: 8px 0 0;
+  color: #5c4636;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.handoff .btn {
+  margin-top: 10px;
+}
+
+.returned-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 28px 20px;
+  background: #e7dcc8;
+}
+
+.returned-slip {
+  width: min(100%, 320px);
+  margin: 0;
+  padding: 28px 22px 32px;
+  border: 1px solid rgba(110, 52, 46, 0.45);
+  background-color: var(--paper);
+  background-image: var(--paper-grain);
+  color: #2c241e;
+  transform: rotate(-1.1deg);
+}
+
+.returned-slip h1 {
+  margin: 8px 0 12px;
+  color: #2c241e;
+  font-family: var(--serif);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.45;
+}
+
+.returned-slip p:last-child {
+  margin: 0;
+  color: #5c4636;
+  line-height: 1.7;
+}
+
+.read-invite {
+  margin: 22px 0 8px;
+  text-align: center;
+  font-family: var(--serif);
+  letter-spacing: 0.08em;
+}
+
+.read-invite a {
+  color: var(--oxblood);
+}
+
+#flight-sheet.is-friend-open:not(.is-arrived) #flight-eta::before {
+  content: none;
+}
+
+#flight-sheet:has(.handoff:not([hidden])) {
+  max-height: 62vh;
+  overflow: auto;
+}

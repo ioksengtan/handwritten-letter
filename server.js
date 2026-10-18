@@ -1,12 +1,15 @@
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripImageMeta } from "./lib/image-meta.js";
+import { mountLetterLinks } from "./lib/pages.js";
 import { createStore } from "./lib/store.js";
 import { contactRefusal } from "./shared/contact.js";
+import { planFriendLetter } from "./shared/friend.js";
 import { DEFAULT_PACE, PACES, describeFlight, haversineKm } from "./shared/flight.js";
+import { assignLetterLinks, isPublicToken } from "./shared/link.js";
 import { awaitsReceipt } from "./shared/mailbox.js";
 import { personRecipient, pickPerson, sameHomeCity } from "./shared/matching.js";
 import { findPlace } from "./shared/places.js";
@@ -98,6 +101,38 @@ function buildGeometry(fromId, toId, pace, fallback = DEFAULT_PACE, people = nul
   };
 }
 
+function geometryBody(geo) {
+  if (!geo?.error) return null;
+  const body = { error: geo.error };
+  if (geo.reasons?.length) body.reasons = geo.reasons;
+  return body;
+}
+
+function resolveTrip(body = {}, existing = null, paceFallback = DEFAULT_PACE, people = null) {
+  const pace = body.pace || existing?.pace;
+  const fromId = body.fromId || existing?.from?.id;
+  const explicitFriend = Object.prototype.hasOwnProperty.call(body, "friendName");
+  const friendSource = explicitFriend
+    ? body.friendName
+    : (existing?.audience === "friend" ? existing?.to?.name : null);
+  const wantsFriend = friendSource != null && String(friendSource).trim() !== "";
+  if (explicitFriend && !wantsFriend) return { error: "請寫下朋友的稱呼" };
+  if (wantsFriend) {
+    const from = senderFromId(fromId);
+    if (!from) return { error: "找不到寄出地" };
+    const cityId = body.toId || existing?.to?.cityId || existing?.to?.id;
+    return planFriendLetter({
+      from,
+      cityId,
+      friendName: friendSource,
+      pace: pace || paceFallback,
+    });
+  }
+  const geo = buildGeometry(fromId, body.toId || existing?.to?.id, pace, paceFallback, people);
+  if (geo.error) return geo;
+  return { ...geo, audience: "stranger" };
+}
+
 function toPublic(letter, nowMs) {
   const flight = describeFlight(letter, nowMs);
   const imageVisible = flight.status !== "in_flight";
@@ -127,6 +162,11 @@ function toPublic(letter, nowMs) {
     senderId: letter.senderId || null,
     receivedAt: letter.receivedAt || null,
     note: imageVisible ? (letter.note || "") : "",
+    audience: letter.audience === "friend" ? "friend" : "stranger",
+    sharePath: letter.status !== "draft" && isPublicToken(letter.shareToken) ? `/s/${letter.shareToken}` : null,
+    friendPath: letter.audience === "friend" && letter.status !== "draft" && isPublicToken(letter.friendToken)
+      ? `/f/${letter.friendToken}`
+      : null,
     serverNow: new Date(nowMs).toISOString(),
     imageUrl: imageVisible ? `/api/letters/${letter.id}/image` : null,
   };
@@ -172,9 +212,44 @@ export function createApp({
     return changed ? store.list() : next;
   }
 
+  function takenTokens(letters) {
+    const used = new Set();
+    for (const letter of letters) {
+      if (isPublicToken(letter.shareToken)) used.add(letter.shareToken);
+      if (isPublicToken(letter.friendToken)) used.add(letter.friendToken);
+    }
+    return used;
+  }
+
+  function backfillLinks(letters) {
+    const used = takenTokens(letters);
+    let changed = false;
+    const next = letters.map((letter) => {
+      if (letter.status === "draft") return letter;
+      const needsShare = !isPublicToken(letter.shareToken);
+      const needsFriend = letter.audience === "friend" && !isPublicToken(letter.friendToken);
+      if (!needsShare && !needsFriend) return letter;
+      changed = true;
+      const linked = assignLetterLinks(
+        { ...letter, audience: letter.audience === "friend" ? "friend" : "stranger" },
+        used,
+        randomBytes,
+      );
+      used.add(linked.shareToken);
+      if (linked.friendToken) used.add(linked.friendToken);
+      return linked;
+    });
+    if (!changed) return letters;
+    store.replaceAll(next);
+    return store.list();
+  }
+
+  function readyLetters(nowMs) {
+    return backfillLinks(persistArrivals(nowMs));
+  }
+
   function readLetter(id, nowMs) {
-    persistArrivals(nowMs);
-    return store.get(id);
+    return readyLetters(nowMs).find((letter) => letter.id === id) || null;
   }
 
   function recentRecipientIds(limit = 1) {
@@ -298,7 +373,7 @@ export function createApp({
 
   app.get("/api/letters", (req, res) => {
     const nowMs = now();
-    const letters = persistArrivals(nowMs);
+    const letters = readyLetters(nowMs);
     res.json(letters.map((letter) => toPublic(letter, nowMs)));
   });
 
@@ -463,12 +538,15 @@ export function createApp({
     const body = req.body || {};
     const sender = readSenderId(body.senderId);
     if (sender.error) return res.status(sender.status).json({ error: sender.error });
-    if (sender.senderId && body.toId === sender.senderId) {
+    const explicitFriend = Object.prototype.hasOwnProperty.call(body, "friendName")
+      && String(body.friendName ?? "").trim() !== "";
+    if (!explicitFriend && sender.senderId && body.toId === sender.senderId) {
       return res.status(400).json({ error: "不能寄給自己。" });
     }
     const people = currentPeople();
-    const geo = buildGeometry(body.fromId, body.toId, body.pace, paceFallback, people);
-    if (geo.error) return res.status(400).json({ error: geo.error });
+    const geo = resolveTrip(body, null, paceFallback, people);
+    const geoError = geometryBody(geo);
+    if (geoError) return res.status(400).json(geoError);
     const noted = readNote(body.note);
     if (noted.error) {
       return res.status(noted.status).json({ error: noted.error, reasons: noted.reasons });
@@ -488,11 +566,12 @@ export function createApp({
     const image = applyImage(id, body.imageDataUrl);
     if (image.error) return res.status(400).json({ error: image.error });
     const timestamp = new Date(nowMs).toISOString();
-    let letter = {
+    let letter = assignLetterLinks({
       id,
       status: "draft",
       from: decorateFrom(geo.from, sender.senderId),
       to: geo.to,
+      audience: geo.audience,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
@@ -506,7 +585,7 @@ export function createApp({
       arrivesAt: null,
       deliveredAt: null,
       receivedAt: null,
-    };
+    }, takenTokens(store.list()), randomBytes);
     if (launch) {
       const departed = new Date(nowMs);
       letter = {
@@ -528,14 +607,9 @@ export function createApp({
       return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
-    const geo = buildGeometry(
-      body.fromId || existing.from.id,
-      body.toId || existing.to.id,
-      body.pace || existing.pace,
-      paceFallback,
-      currentPeople(),
-    );
-    if (geo.error) return res.status(400).json({ error: geo.error });
+    const geo = resolveTrip(body, existing, paceFallback, currentPeople());
+    const geoError = geometryBody(geo);
+    if (geoError) return res.status(400).json(geoError);
     const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
     if (sender.error) return res.status(sender.status).json({ error: sender.error });
     const noted = readNote(body.note == null ? existing.note : body.note);
@@ -550,9 +624,11 @@ export function createApp({
       if (image.error) return res.status(400).json({ error: image.error });
       imageFile = image.imageFile;
     }
-    const letter = store.update(existing.id, {
+    const letter = store.update(existing.id, assignLetterLinks({
+      ...existing,
       from: decorateFrom(geo.from, sender.senderId),
       to: geo.to,
+      audience: geo.audience,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
@@ -561,7 +637,7 @@ export function createApp({
       note: noted.note,
       imageFile,
       updatedAt: new Date(nowMs).toISOString(),
-    });
+    }, takenTokens(store.list()), randomBytes));
     res.json(toPublic(letter, nowMs));
   });
 
@@ -573,14 +649,9 @@ export function createApp({
       return res.status(409).json({ error: "這封信已經寄出" });
     }
     const body = req.body || {};
-    const geo = buildGeometry(
-      body.fromId || existing.from.id,
-      body.toId || existing.to.id,
-      body.pace || existing.pace,
-      paceFallback,
-      currentPeople(),
-    );
-    if (geo.error) return res.status(400).json({ error: geo.error });
+    const geo = resolveTrip(body, existing, paceFallback, currentPeople());
+    const geoError = geometryBody(geo);
+    if (geoError) return res.status(400).json(geoError);
     const sender = readSenderId(body.senderId == null ? existing.senderId : body.senderId);
     if (sender.error) return res.status(sender.status).json({ error: sender.error });
     const noted = readNote(body.note == null ? existing.note : body.note);
@@ -602,10 +673,12 @@ export function createApp({
     }
     if (!imageFile) return res.status(400).json({ error: "請附上信面圖片" });
     const departed = new Date(nowMs);
-    const letter = store.update(existing.id, {
+    const letter = store.update(existing.id, assignLetterLinks({
+      ...existing,
       status: "in_flight",
       from: decorateFrom(geo.from, gate.senderId),
       to: geo.to,
+      audience: geo.audience,
       distanceKm: geo.distanceKm,
       pace: geo.pace,
       durationSeconds: geo.durationSeconds,
@@ -618,7 +691,7 @@ export function createApp({
       deliveredAt: null,
       receivedAt: null,
       updatedAt: departed.toISOString(),
-    });
+    }, takenTokens(store.list()), randomBytes));
     res.json(toPublic(letter, nowMs));
   }
 
@@ -696,6 +769,22 @@ export function createApp({
 
   app.post("/api/letters/:id/throw", launchDraft);
   app.post("/api/letters/:id/send", launchDraft);
+
+  mountLetterLinks(app, {
+    now,
+    indexPath: path.join(root, "public/index.html"),
+    load(field, token) {
+      const nowMs = now();
+      const letters = readyLetters(nowMs);
+      return {
+        nowMs,
+        letter: letters.find((item) => item[field] === token) || null,
+      };
+    },
+    imageAbsPath(letter) {
+      return store.imageAbsPath(letter?.imageFile);
+    },
+  });
 
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);

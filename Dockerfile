@@ -8,6 +8,7 @@ RUN npm ci --omit=dev
 COPY public ./public
 COPY shared ./shared
 COPY lib ./lib
+COPY assets ./assets
 COPY server.js ./
 
 RUN mkdir -p /app/data && chown -R node:node /app
