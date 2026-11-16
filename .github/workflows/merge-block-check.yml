@@ -1,0 +1,40 @@
+name: merge-block-check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  merge-block-check:
+    name: merge-block-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: 檢查標題、說明與草稿狀態
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [ "${PR_DRAFT}" = "true" ]; then
+            echo "不通過：此拉取請求為草稿狀態（draft=true），禁止合併。"
+            exit 1
+          fi
+          for keyword in "勿合併" "草稿"; do
+            case "${PR_TITLE}" in
+              *"${keyword}"*)
+                echo "不通過：標題含「${keyword}」，禁止合併。"
+                exit 1
+                ;;
+            esac
+            case "${PR_BODY:-}" in
+              *"${keyword}"*)
+                echo "不通過：說明含「${keyword}」，禁止合併。"
+                exit 1
+                ;;
+            esac
+          done
+          echo "通過：標題與說明皆無阻擋關鍵字，且非草稿，可以合併。"
+          exit 0
